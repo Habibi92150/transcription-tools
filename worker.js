@@ -4,25 +4,29 @@
 import { CORE_URL, FFMessageType } from "./const.js";
 import { ERROR_UNKNOWN_MESSAGE_TYPE, ERROR_NOT_LOADED, ERROR_IMPORT_FAILURE, } from "./errors.js";
 let ffmpeg;
-const load = async ({ coreURL: _coreURL = CORE_URL, wasmURL: _wasmURL, workerURL: _workerURL, }) => {
+const load = async ({ coreURL: _coreURL, wasmURL: _wasmURL, workerURL: _workerURL, }) => {
     const first = !ffmpeg;
+    try {
+        if (!_coreURL)
+            _coreURL = CORE_URL;
+        // when web worker type is `classic`.
+        importScripts(_coreURL);
+    }
+    catch {
+        if (!_coreURL)
+            _coreURL = CORE_URL.replace('/umd/', '/esm/');
+        // when web worker type is `module`.
+        self.createFFmpegCore = (await import(
+        /* webpackIgnore: true */ /* @vite-ignore */ _coreURL)).default;
+        if (!self.createFFmpegCore) {
+            throw ERROR_IMPORT_FAILURE;
+        }
+    }
     const coreURL = _coreURL;
     const wasmURL = _wasmURL ? _wasmURL : _coreURL.replace(/.js$/g, ".wasm");
     const workerURL = _workerURL
         ? _workerURL
         : _coreURL.replace(/.js$/g, ".worker.js");
-    try {
-        // when web worker type is `classic`.
-        importScripts(coreURL);
-    }
-    catch {
-        // when web worker type is `module`.
-        self.createFFmpegCore = (await import(
-        /* @vite-ignore */ coreURL)).default;
-        if (!self.createFFmpegCore) {
-            throw ERROR_IMPORT_FAILURE;
-        }
-    }
     ffmpeg = await self.createFFmpegCore({
         // Fix `Overload resolution failed.` when using multi-threaded ffmpeg-core.
         // Encoded wasmURL and workerURL in the URL as a hack to fix locateFile issue.
@@ -76,12 +80,24 @@ const deleteDir = ({ path }) => {
     ffmpeg.FS.rmdir(path);
     return true;
 };
+const mount = ({ fsType, options, mountPoint }) => {
+    const str = fsType;
+    const fs = ffmpeg.FS.filesystems[str];
+    if (!fs)
+        return false;
+    ffmpeg.FS.mount(fs, options, mountPoint);
+    return true;
+};
+const unmount = ({ mountPoint }) => {
+    ffmpeg.FS.unmount(mountPoint);
+    return true;
+};
 self.onmessage = async ({ data: { id, type, data: _data }, }) => {
     const trans = [];
     let data;
     try {
         if (type !== FFMessageType.LOAD && !ffmpeg)
-            throw ERROR_NOT_LOADED;
+            throw ERROR_NOT_LOADED; // eslint-disable-line
         switch (type) {
             case FFMessageType.LOAD:
                 data = await load(_data);
@@ -109,6 +125,12 @@ self.onmessage = async ({ data: { id, type, data: _data }, }) => {
                 break;
             case FFMessageType.DELETE_DIR:
                 data = deleteDir(_data);
+                break;
+            case FFMessageType.MOUNT:
+                data = mount(_data);
+                break;
+            case FFMessageType.UNMOUNT:
+                data = unmount(_data);
                 break;
             default:
                 throw ERROR_UNKNOWN_MESSAGE_TYPE;

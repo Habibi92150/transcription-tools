@@ -363,10 +363,10 @@
       if (ffmpegBundlePromise) return ffmpegBundlePromise;
       ffmpegBundlePromise = (async () => {
         const [{ FFmpeg }, { fetchFile }] = await Promise.all([
-          import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/esm/index.js"),
+          import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js"),
           import("https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js")
         ]);
-        const classWorkerURL = location.origin + "/worker.js";
+        const classWorkerURL = assetUrl("worker.js");
         const ffmpeg = new FFmpeg();
         ffmpeg.on("log", () => {});
         await ffmpeg.load({
