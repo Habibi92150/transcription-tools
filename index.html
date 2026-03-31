@@ -366,8 +366,7 @@
           import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/esm/index.js"),
           import("https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js")
         ]);
-        const workerBlob = await fetch("https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/esm/worker.js").then(r => r.blob());
-        const classWorkerURL = URL.createObjectURL(workerBlob);
+        const classWorkerURL = new URL("./worker.js", import.meta.url).href;
         const ffmpeg = new FFmpeg();
         ffmpeg.on("log", () => {});
         await ffmpeg.load({
