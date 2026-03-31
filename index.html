@@ -375,13 +375,9 @@
           coreURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
           wasmURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm"
         });
-```
 
-Ctrl+S puis :
-```
-git add index.html
-git commit -m "fix worker blob url"
-git push
+
+
         return { ffmpeg, fetchFile };
       })();
       return ffmpegBundlePromise;
