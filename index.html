@@ -3,6 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script src="coi-serviceworker.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Transcription audio -> SRT</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -314,6 +315,7 @@
     <div id="fileInfo" class="file-info">Aucun fichier sélectionné.</div>
     <div id="status" class="status"></div>
   </main>
+<p style="position:fixed;bottom:14px;left:18px;margin:0;font-family:Sora,sans-serif;font-size:0.78rem;color:rgba(197,244,255,0.4);">Fait par Adam</p>
 
   <script>
     const pickBtn = document.getElementById("pickBtn");
@@ -361,14 +363,14 @@
       if (ffmpegBundlePromise) return ffmpegBundlePromise;
       ffmpegBundlePromise = (async () => {
         const [{ FFmpeg }, { fetchFile }] = await Promise.all([
-          import(assetUrl("node_modules/@ffmpeg/ffmpeg/dist/esm/index.js")),
-          import(assetUrl("node_modules/@ffmpeg/util/dist/esm/index.js"))
+          import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/esm/index.js"),
+          import("https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js")
         ]);
         const ffmpeg = new FFmpeg();
         ffmpeg.on("log", () => {});
         await ffmpeg.load({
-          coreURL: assetUrl("node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js"),
-          wasmURL: assetUrl("node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm")
+          coreURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
+          wasmURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm"
         });
         return { ffmpeg, fetchFile };
       })();
