@@ -189,6 +189,19 @@
           <input id="apiKeyInput" class="field-input" type="password" autocomplete="off" placeholder="Entrer l'accès équipe…" />
         </div>
 
+        <div id="localModeRow" class="option-row">
+          <label class="checkbox-label" for="localMode">
+            <input id="localMode" type="checkbox" />
+            <span>Mode backend local/hébergé (sans clé API externe)</span>
+          </label>
+          <p class="option-hint">Quand activé, l'app envoie l'audio extrait au backend Node (`/api/transcribe`).</p>
+        </div>
+
+        <div id="backendUrlRow" class="field hidden">
+          <label class="field-label" for="backendUrlInput">URL backend</label>
+          <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
+        </div>
+
         <div class="action-row" id="actionRow">
           <button id="pickBtn" class="btn btn-ghost" type="button">
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
@@ -254,7 +267,10 @@
             <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
               <div class="progress-fill" id="progressFill"></div>
             </div>
-            <span class="progress-eta" id="progressEta" aria-live="polite">Transcription en cours...</span>
+            <div class="progress-meta">
+              <span class="progress-eta" id="progressEta" aria-live="polite">Transcription en cours...</span>
+              <span class="progress-remain" id="progressRemain" aria-live="polite"></span>
+            </div>
           </div>
         </div>
       </section>

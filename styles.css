@@ -566,6 +566,13 @@ body {
 .step[data-status="done"]   .step-label { color: var(--text-secondary); }
 
 .progress-wrap { display: flex; align-items: center; gap: 12px; }
+.progress-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 118px;
+}
 .progress-bar {
   flex: 1; height: 4px; border-radius: 2px;
   background: var(--color-cta); overflow: hidden;
@@ -579,7 +586,15 @@ body {
   animation: progress-sweep 1.1s linear infinite;
 }
 @keyframes progress-sweep { 0% { background-position: 0% 0; } 100% { background-position: 200% 0; } }
-.progress-eta { font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; min-width: 80px; text-align: right; }
+.progress-eta { font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; text-align: right; }
+.progress-remain {
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-align: right;
+}
 
 /* Export panel */
 .export-success {
