@@ -5,3 +5,5 @@ torch==2.2.2
 torchaudio==2.2.2
 huggingface_hub==0.23.5
 pyannote.audio==3.3.1
+numpy>=1.26,<2
+matplotlib>=3.8
