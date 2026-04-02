@@ -1,0 +1,865 @@
+const fs = require("fs/promises");
+const path = require("path");
+const os = require("os");
+const { spawn } = require("child_process");
+const crypto = require("crypto");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
+const WavDecoder = require("wav-decoder");
+const express = require("express");
+const cors = require("cors");
+const multer = require("multer");
+
+const DEFAULT_LOCAL_BIN = path.join(__dirname, "bin", "whispercpp", "Release", "whisper-cli.exe");
+const DEFAULT_LOCAL_MODEL = path.join(__dirname, "models", "ggml-base.bin");
+const resolveMaybeRelative = (p) => (path.isAbsolute(p) ? p : path.resolve(process.cwd(), p));
+const PORT = Number(process.env.PORT || 8787);
+const MAX_FILE_MB = Number(process.env.MAX_FILE_MB || 600);
+const WHISPER_CPP_BIN = resolveMaybeRelative(process.env.WHISPER_CPP_BIN || DEFAULT_LOCAL_BIN);
+const WHISPER_MODEL_PATH = resolveMaybeRelative(process.env.WHISPER_MODEL_PATH || DEFAULT_LOCAL_MODEL);
+const WHISPER_LANGUAGE = process.env.WHISPER_LANGUAGE || "fr";
+const DIARIZATION_MAX_SPEAKERS = Math.max(1, Number(process.env.DIARIZATION_MAX_SPEAKERS || 2));
+const DIARIZATION_MIN_GAP_SEC = Math.max(0.1, Number(process.env.DIARIZATION_MIN_GAP_SEC || 1.8));
+const DIARIZATION_MIN_TURN_SEC = Math.max(0.5, Number(process.env.DIARIZATION_MIN_TURN_SEC || 10));
+const DIARIZATION_MIN_TURN_SEGMENTS = Math.max(1, Number(process.env.DIARIZATION_MIN_TURN_SEGMENTS || 4));
+const DIARIZATION_SWITCH_COOLDOWN_SEC = Math.max(0, Number(process.env.DIARIZATION_SWITCH_COOLDOWN_SEC || 6));
+const DIARIZATION_MIN_FEATURE_SEC = Math.max(0.4, Number(process.env.DIARIZATION_MIN_FEATURE_SEC || 0.7));
+const DIARIZATION_MIN_CLUSTER_SEGMENTS = Math.max(2, Number(process.env.DIARIZATION_MIN_CLUSTER_SEGMENTS || 3));
+const DIARIZATION_VOICE_DISTANCE_THRESHOLD = Math.max(0.2, Number(process.env.DIARIZATION_VOICE_DISTANCE_THRESHOLD || 0.85));
+const DIARIZATION_FRAME_SEC = Math.max(0.3, Number(process.env.DIARIZATION_FRAME_SEC || 0.9));
+const DIARIZATION_HOP_SEC = Math.max(0.1, Number(process.env.DIARIZATION_HOP_SEC || 0.35));
+const DIARIZATION_CONTINUITY_BONUS = Math.max(0, Number(process.env.DIARIZATION_CONTINUITY_BONUS || 0.2));
+const WHISPER_BEAM_SIZE = Math.max(1, Number(process.env.WHISPER_BEAM_SIZE || 8));
+const WHISPER_BEST_OF = Math.max(1, Number(process.env.WHISPER_BEST_OF || 8));
+const DIARIZATION_PROVIDER = String(process.env.DIARIZATION_PROVIDER || "local").trim().toLowerCase();
+const DIARIZER_URL = String(process.env.DIARIZER_URL || "http://127.0.0.1:8790").trim().replace(/\/$/, "");
+const DIARIZER_API_KEY = String(process.env.DIARIZER_API_KEY || "").trim();
+const DIARIZER_TIMEOUT_MS = Math.max(5000, Number(process.env.DIARIZER_TIMEOUT_MS || 180000));
+const STT_ENGINE = String(process.env.STT_ENGINE || "whisper-cpp").trim().toLowerCase();
+const GROQ_STT_MODEL = String(process.env.GROQ_STT_MODEL || "whisper-large-v3-turbo").trim();
+const GROQ_STT_TEMPERATURE = String(process.env.GROQ_STT_TEMPERATURE ?? "0");
+const GROQ_STT_TIMEOUT_MS = Math.max(30000, Number(process.env.GROQ_STT_TIMEOUT_MS || 600000));
+const TEXT_CLEANUP_PROVIDER = String(process.env.TEXT_CLEANUP_PROVIDER || "none").trim().toLowerCase();
+const GROQ_BASE_URL = String(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").trim().replace(/\/$/, "");
+const GROQ_CLEANUP_MODEL = String(process.env.GROQ_CLEANUP_MODEL || "llama-3.1-8b-instant").trim();
+const GROQ_TIMEOUT_MS = Math.max(5000, Number(process.env.GROQ_TIMEOUT_MS || 60000));
+const GROQ_CONTEXT_WINDOW = Math.max(0, Number(process.env.GROQ_CONTEXT_WINDOW || 5));
+const GROQ_GLOBAL_CONTEXT_CHARS = Math.max(0, Number(process.env.GROQ_GLOBAL_CONTEXT_CHARS || 1800));
+function parseGroqCleanupHints() {
+  const raw = String(process.env.GROQ_CLEANUP_HINTS || "");
+  return raw
+    .split(/[,;\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+}
+const TMP_DIR = path.join(os.tmpdir(), "transcription-tools");
+
+const app = express();
+app.use(cors());
+
+const storage = multer.diskStorage({
+  destination: async (_req, _file, cb) => {
+    try {
+      await fs.mkdir(TMP_DIR, { recursive: true });
+      cb(null, TMP_DIR);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "") || ".bin";
+    cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_MB * 1024 * 1024 },
+});
+
+function runCommand(bin, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (buf) => {
+      stderr += String(buf || "");
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `${bin} exited with ${code}`));
+    });
+  });
+}
+
+function msToSec(ms) {
+  return Math.max(0, Number(ms || 0) / 1000);
+}
+
+function parseWhisperJson(payload) {
+  const transcription =
+    payload?.result?.transcription ||
+    payload?.transcription ||
+    payload?.segments ||
+    [];
+
+  if (!Array.isArray(transcription)) return [];
+
+  const out = [];
+  for (const seg of transcription) {
+    const text = String(seg?.text || "").trim();
+    if (!text) continue;
+
+    let start = Number(seg?.start);
+    let end = Number(seg?.end);
+
+    if (!Number.isFinite(start) && Number.isFinite(seg?.offsets?.from)) {
+      start = msToSec(seg.offsets.from);
+    }
+    if (!Number.isFinite(end) && Number.isFinite(seg?.offsets?.to)) {
+      end = msToSec(seg.offsets.to);
+    }
+    if (!Number.isFinite(start) && Number.isFinite(seg?.timestamps?.from)) {
+      start = msToSec(seg.timestamps.from);
+    }
+    if (!Number.isFinite(end) && Number.isFinite(seg?.timestamps?.to)) {
+      end = msToSec(seg.timestamps.to);
+    }
+
+    start = Number.isFinite(start) ? start : 0;
+    end = Number.isFinite(end) ? Math.max(start, end) : start + 2;
+
+    out.push({ start, end, text });
+  }
+  return out;
+}
+
+function applyGapHeuristicDiarization(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+  if (DIARIZATION_MAX_SPEAKERS <= 1) {
+    return segments.map((seg) => ({ ...seg, speaker: "SPEAKER_00" }));
+  }
+
+  let currentSpeaker = 0;
+  let turnDuration = 0;
+  let turnSegments = 0;
+  let prevEnd = 0;
+  let lastSwitchAt = Number.NEGATIVE_INFINITY;
+
+  return segments.map((seg, idx) => {
+    const gap = Math.max(0, seg.start - prevEnd);
+    const segDuration = Math.max(0, seg.end - seg.start);
+    turnDuration += segDuration;
+    turnSegments += 1;
+
+    // Stabilized turn logic: switch only on sufficiently long silence after a real turn.
+    const canSwitchAfterTurn = turnDuration >= DIARIZATION_MIN_TURN_SEC && turnSegments >= DIARIZATION_MIN_TURN_SEGMENTS;
+    const cooldownElapsed = seg.start - lastSwitchAt >= DIARIZATION_SWITCH_COOLDOWN_SEC;
+    const shouldSwitch = idx > 0 && gap >= DIARIZATION_MIN_GAP_SEC && canSwitchAfterTurn && cooldownElapsed;
+
+    if (shouldSwitch) {
+      currentSpeaker = (currentSpeaker + 1) % DIARIZATION_MAX_SPEAKERS;
+      turnDuration = segDuration;
+      turnSegments = 1;
+      lastSwitchAt = seg.start;
+    }
+    prevEnd = seg.end;
+
+    return { ...seg, speaker: `SPEAKER_${String(currentSpeaker).padStart(2, "0")}` };
+  });
+}
+
+function estimatePitchHz(samples, sampleRate) {
+  if (!samples || samples.length < 128) return 0;
+  const size = Math.min(samples.length, 4096);
+  const offset = Math.max(0, Math.floor((samples.length - size) / 2));
+  const frame = samples.subarray(offset, offset + size);
+  let bestLag = -1;
+  let best = 0;
+  const minLag = Math.max(20, Math.floor(sampleRate / 350));
+  const maxLag = Math.min(size - 2, Math.floor(sampleRate / 70));
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0;
+    for (let i = 0; i < size - lag; i++) sum += frame[i] * frame[i + lag];
+    if (sum > best) {
+      best = sum;
+      bestLag = lag;
+    }
+  }
+  if (bestLag <= 0) return 0;
+  return sampleRate / bestLag;
+}
+
+function computeSegmentVoiceFeatures(samples, sampleRate, seg) {
+  const start = Math.max(0, Math.floor(seg.start * sampleRate));
+  const end = Math.min(samples.length, Math.ceil(seg.end * sampleRate));
+  if (end <= start) return null;
+  const duration = (end - start) / sampleRate;
+  if (duration < DIARIZATION_MIN_FEATURE_SEC) return null;
+
+  const slice = samples.subarray(start, end);
+  const step = Math.max(1, Math.floor(slice.length / 5000));
+
+  let energy = 0;
+  let zc = 0;
+  let prev = slice[0] || 0;
+  let count = 0;
+  for (let i = 0; i < slice.length; i += step) {
+    const v = slice[i];
+    energy += v * v;
+    if ((v >= 0 && prev < 0) || (v < 0 && prev >= 0)) zc += 1;
+    prev = v;
+    count += 1;
+  }
+  if (!count) return null;
+  const rms = Math.sqrt(energy / count);
+  const zcr = zc / count;
+  const pitch = estimatePitchHz(slice, sampleRate);
+
+  return {
+    rms: Math.log10(Math.max(1e-8, rms)),
+    zcr,
+    pitch: pitch > 0 ? Math.log2(pitch) : 0,
+  };
+}
+
+function computeFrameVoiceFeatures(frame, sampleRate) {
+  if (!frame || frame.length < 128) return null;
+  let energy = 0;
+  let absMax = 1e-9;
+  let zc = 0;
+  let prev = frame[0] || 0;
+  let sum = 0;
+  let sumSq = 0;
+  for (let i = 0; i < frame.length; i++) {
+    const v = frame[i];
+    const av = Math.abs(v);
+    energy += v * v;
+    sum += v;
+    sumSq += v * v;
+    absMax = Math.max(absMax, av);
+    if ((v >= 0 && prev < 0) || (v < 0 && prev >= 0)) zc += 1;
+    prev = v;
+  }
+  const n = frame.length;
+  const rms = Math.sqrt(energy / n);
+  const mean = sum / n;
+  const variance = Math.max(1e-12, sumSq / n - mean * mean);
+  const std = Math.sqrt(variance);
+  let skewNum = 0;
+  for (let i = 0; i < n; i++) skewNum += ((frame[i] - mean) / std) ** 3;
+  const skew = skewNum / n;
+  const pitch = estimatePitchHz(frame, sampleRate);
+  return {
+    rms: Math.log10(Math.max(1e-8, rms)),
+    zcr: zc / n,
+    pitch: pitch > 0 ? Math.log2(pitch) : 0,
+    crest: absMax / Math.max(1e-8, rms),
+    skew,
+  };
+}
+
+function normalizeFeatures(features) {
+  const keys = ["rms", "zcr", "pitch", "crest", "skew"];
+  const stats = {};
+  for (const key of keys) {
+    const vals = features.map((f) => f[key]);
+    const mean = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
+    const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / Math.max(1, vals.length);
+    const std = Math.sqrt(variance) || 1;
+    stats[key] = { mean, std };
+  }
+  return features.map((f) => ({
+    rms: (f.rms - stats.rms.mean) / stats.rms.std,
+    zcr: (f.zcr - stats.zcr.mean) / stats.zcr.std,
+    pitch: (f.pitch - stats.pitch.mean) / stats.pitch.std,
+    crest: (f.crest - stats.crest.mean) / stats.crest.std,
+    skew: (f.skew - stats.skew.mean) / stats.skew.std,
+  }));
+}
+
+function squaredDistance(a, b) {
+  const dr = a.rms - b.rms;
+  const dz = a.zcr - b.zcr;
+  const dp = a.pitch - b.pitch;
+  const dc = a.crest - b.crest;
+  const ds = a.skew - b.skew;
+  return dr * dr + dz * dz + dp * dp + 0.5 * dc * dc + 0.25 * ds * ds;
+}
+
+function runKmeans2(points) {
+  if (points.length < DIARIZATION_MIN_CLUSTER_SEGMENTS * 2) return null;
+  let c0 = { ...points[0] };
+  let c1 = { ...points[Math.floor(points.length / 2)] };
+  let labels = new Array(points.length).fill(0);
+  for (let iter = 0; iter < 12; iter++) {
+    for (let i = 0; i < points.length; i++) {
+      const d0 = squaredDistance(points[i], c0);
+      const d1 = squaredDistance(points[i], c1);
+      labels[i] = d0 <= d1 ? 0 : 1;
+    }
+    const sums = [
+      { rms: 0, zcr: 0, pitch: 0, n: 0 },
+      { rms: 0, zcr: 0, pitch: 0, n: 0 },
+    ];
+    for (let i = 0; i < points.length; i++) {
+      const l = labels[i];
+      sums[l].rms += points[i].rms;
+      sums[l].zcr += points[i].zcr;
+      sums[l].pitch += points[i].pitch;
+      sums[l].n += 1;
+    }
+    if (!sums[0].n || !sums[1].n) return null;
+    c0 = { rms: sums[0].rms / sums[0].n, zcr: sums[0].zcr / sums[0].n, pitch: sums[0].pitch / sums[0].n };
+    c1 = { rms: sums[1].rms / sums[1].n, zcr: sums[1].zcr / sums[1].n, pitch: sums[1].pitch / sums[1].n };
+  }
+
+  const count0 = labels.filter((l) => l === 0).length;
+  const count1 = labels.length - count0;
+  if (count0 < DIARIZATION_MIN_CLUSTER_SEGMENTS || count1 < DIARIZATION_MIN_CLUSTER_SEGMENTS) return null;
+  const centerDistance = Math.sqrt(squaredDistance(c0, c1));
+  if (centerDistance < DIARIZATION_VOICE_DISTANCE_THRESHOLD) return null;
+  return { labels, c0, c1, centerDistance };
+}
+
+function smoothLabels(labels) {
+  if (!Array.isArray(labels) || labels.length < 3) return labels;
+  const out = [...labels];
+  for (let i = 1; i < out.length - 1; i++) {
+    if (out[i - 1] === out[i + 1] && out[i] !== out[i - 1]) out[i] = out[i - 1];
+  }
+  return out;
+}
+
+function normalizeSpeakerLabel(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  const m = s.match(/\d+/);
+  if (m) return `SPEAKER_${String(Number(m[0])).padStart(2, "0")}`;
+  return s.toUpperCase().replace(/\s+/g, "_");
+}
+
+function normalizeDiarizationSegments(raw) {
+  const items = Array.isArray(raw?.segments) ? raw.segments : Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const seg of items) {
+    const speaker = normalizeSpeakerLabel(seg?.speaker);
+    const start = Number(seg?.start);
+    const end = Number(seg?.end);
+    if (!speaker || !Number.isFinite(start) || !Number.isFinite(end)) continue;
+    out.push({ speaker, start: Math.max(0, start), end: Math.max(start, end) });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+function temporalOverlap(a0, a1, b0, b1) {
+  return Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+}
+
+function mergeTranscriptWithDiarization(segments, diarizationSegments) {
+  if (!Array.isArray(segments) || !segments.length) return [];
+  if (!Array.isArray(diarizationSegments) || !diarizationSegments.length) {
+    return segments.map((s) => ({ ...s, speaker: "SPEAKER_00" }));
+  }
+
+  let lastSpeaker = diarizationSegments[0].speaker || "SPEAKER_00";
+  return segments.map((seg) => {
+    const s0 = Number(seg.start) || 0;
+    const s1 = Math.max(s0, Number(seg.end) || s0);
+    let best = null;
+    let bestOverlap = 0;
+    for (const d of diarizationSegments) {
+      const ov = temporalOverlap(s0, s1, d.start, d.end);
+      if (ov > bestOverlap) {
+        bestOverlap = ov;
+        best = d;
+      }
+    }
+    if (best && bestOverlap > 0) lastSpeaker = best.speaker;
+    return { ...seg, speaker: best?.speaker || lastSpeaker || "SPEAKER_00" };
+  });
+}
+
+function splitSegmentFrames(seg, frameSec, hopSec) {
+  const out = [];
+  const start = Math.max(0, Number(seg.start || 0));
+  const end = Math.max(start, Number(seg.end || start));
+  if (end - start <= 0) return out;
+  if (end - start <= frameSec) {
+    out.push({ start, end });
+    return out;
+  }
+  let t = start;
+  while (t < end) {
+    const fEnd = Math.min(end, t + frameSec);
+    out.push({ start: t, end: fEnd });
+    if (fEnd >= end) break;
+    t += hopSec;
+  }
+  return out;
+}
+
+function majorityLabel(labels) {
+  const count = new Map();
+  for (const l of labels) count.set(l, (count.get(l) || 0) + 1);
+  let best = labels[0] || 0;
+  let bestN = -1;
+  for (const [k, v] of count.entries()) {
+    if (v > bestN) {
+      bestN = v;
+      best = k;
+    }
+  }
+  return best;
+}
+
+async function applyVoiceAwareDiarization(filePath, segments) {
+  if (!Array.isArray(segments) || !segments.length) return { segments: [], strategy: "none" };
+  if (DIARIZATION_MAX_SPEAKERS <= 1) {
+    return { segments: segments.map((seg) => ({ ...seg, speaker: "SPEAKER_00" })), strategy: "single-speaker" };
+  }
+
+  try {
+    const wavBuffer = await fs.readFile(filePath);
+    const decoded = await WavDecoder.decode(wavBuffer);
+    const samples = decoded?.channelData?.[0];
+    const sampleRate = Number(decoded?.sampleRate || 0);
+    if (!samples || !sampleRate) {
+      return { segments: applyGapHeuristicDiarization(segments), strategy: "gap-fallback" };
+    }
+
+    const frameItems = [];
+    for (let i = 0; i < segments.length; i++) {
+      const frames = splitSegmentFrames(segments[i], DIARIZATION_FRAME_SEC, DIARIZATION_HOP_SEC);
+      for (const fr of frames) {
+        const start = Math.max(0, Math.floor(fr.start * sampleRate));
+        const end = Math.min(samples.length, Math.ceil(fr.end * sampleRate));
+        if (end <= start) continue;
+        const feat = computeFrameVoiceFeatures(samples.subarray(start, end), sampleRate);
+        if (!feat) continue;
+        frameItems.push({ segIndex: i, feat });
+      }
+    }
+
+    if (frameItems.length < DIARIZATION_MIN_CLUSTER_SEGMENTS * 4) {
+      return { segments: applyGapHeuristicDiarization(segments), strategy: "gap-fallback" };
+    }
+
+    const norm = normalizeFeatures(frameItems.map((x) => x.feat));
+    const clustered = runKmeans2(norm);
+    if (!clustered) {
+      return { segments: applyGapHeuristicDiarization(segments), strategy: "gap-fallback" };
+    }
+
+    const smoothed = smoothLabels(clustered.labels);
+    const perSegLabels = new Map();
+    for (let i = 0; i < frameItems.length; i++) {
+      const segIndex = frameItems[i].segIndex;
+      const arr = perSegLabels.get(segIndex) || [];
+      arr.push(smoothed[i]);
+      perSegLabels.set(segIndex, arr);
+    }
+
+    const fullLabels = new Array(segments.length).fill(0);
+    for (let i = 0; i < fullLabels.length; i++) {
+      const votes = perSegLabels.get(i);
+      if (votes && votes.length) fullLabels[i] = majorityLabel(votes);
+      else if (i > 0) fullLabels[i] = fullLabels[i - 1];
+    }
+
+    // Continuity smoothing: keep previous speaker on near-tie boundaries.
+    for (let i = 1; i < fullLabels.length; i++) {
+      const votes = perSegLabels.get(i);
+      if (!votes || votes.length < 2) continue;
+      const c0 = votes.filter((x) => x === 0).length;
+      const c1 = votes.length - c0;
+      const winner = c0 >= c1 ? 0 : 1;
+      const loser = winner === 0 ? 1 : 0;
+      const margin = Math.abs(c0 - c1) / votes.length;
+      if (margin < DIARIZATION_CONTINUITY_BONUS && fullLabels[i - 1] === loser) {
+        fullLabels[i] = fullLabels[i - 1];
+      }
+    }
+
+    // Keep stable speaker ids: lower-pitch centroid is SPEAKER_00.
+    const swap = clustered.c0.pitch > clustered.c1.pitch;
+    const diarized = segments.map((seg, i) => {
+      const raw = fullLabels[i] || 0;
+      const label = swap ? (raw === 0 ? 1 : 0) : raw;
+      return { ...seg, speaker: `SPEAKER_${String(label).padStart(2, "0")}` };
+    });
+    return { segments: diarized, strategy: "voice-features-v2" };
+  } catch {
+    return { segments: applyGapHeuristicDiarization(segments), strategy: "gap-fallback" };
+  }
+}
+
+async function diarizeWithExternalService(filePath) {
+  const fileBuffer = await fs.readFile(filePath);
+  const form = new FormData();
+  form.append("file", new Blob([fileBuffer], { type: "audio/wav" }), "audio.wav");
+  form.append("max_speakers", String(DIARIZATION_MAX_SPEAKERS));
+
+  const headers = {};
+  if (DIARIZER_API_KEY) headers.Authorization = `Bearer ${DIARIZER_API_KEY}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DIARIZER_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${DIARIZER_URL}/diarize`, {
+      method: "POST",
+      headers,
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Diarizer HTTP ${res.status} ${body}`.trim());
+    }
+    const payload = await res.json();
+    return normalizeDiarizationSegments(payload);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseJsonLoose(text) {
+  const raw = String(text || "").trim();
+  if (!raw) throw new Error("Empty JSON payload");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const block = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+    if (block) return JSON.parse(block);
+    const first = raw.indexOf("{");
+    const last = raw.lastIndexOf("}");
+    if (first >= 0 && last > first) return JSON.parse(raw.slice(first, last + 1));
+    throw new Error("Invalid JSON payload");
+  }
+}
+
+function capitalizeLike(source, target) {
+  if (!source) return target;
+  return source[0] === source[0].toUpperCase()
+    ? target[0].toUpperCase() + target.slice(1)
+    : target;
+}
+
+function applyFrenchContractionRules(input) {
+  let text = String(input || "");
+  if (!text) return text;
+  text = text.replace(/’/g, "'");
+  text = text.replace(/\b([Qq])u['’]\s+([aeiouyhàâäéèêëîïôöùûüœ])/g, (_m, q, v) => `${q}u'${v}`);
+  text = text.replace(/\b([Qq])ue\s+([aeiouyhàâäéèêëîïôöùûüœ])/g, (_m, q, v) => `${q}u'${v}`);
+  text = text.replace(/\b([Dd])e\s+le\b/g, (_m, d) => capitalizeLike(d, "du"));
+  text = text.replace(/\b([Dd])e\s+les\b/g, (_m, d) => capitalizeLike(d, "des"));
+  return text;
+}
+
+function applyFrenchNegationRules(input) {
+  let text = String(input || "");
+  if (!text) return text;
+  text = text.replace(/\b([Cc])['’]est\s+pas\b/g, (_m, c) => `${capitalizeLike(c, "ce")} n'est pas`);
+  text = text.replace(/\b([Jj])['’]ai\s+pas\b/g, (_m, j) => `${capitalizeLike(j, "je")} n'ai pas`);
+  text = text.replace(/\b([Oo])n\s+a\s+pas\b/g, (_m, o) => `${capitalizeLike(o, "on")} n'a pas`);
+  text = text.replace(/\b([Ii])l\s+y\s+a\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n'y a pas`);
+  text = text.replace(/\b([Ii])l\s+est\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n'est pas`);
+  text = text.replace(/\b([Ee])lle\s+est\s+pas\b/g, (_m, e) => `${capitalizeLike(e, "elle")} n'est pas`);
+  return text;
+}
+
+function normalizeFrenchTypography(input) {
+  let text = String(input || "");
+  if (!text) return text;
+  text = text.replace(/\s+/g, " ").trim();
+  text = text.replace(/'(?=\s)/g, "");
+  text = text.replace(/\s+([,.;!?])/g, "$1");
+  return text;
+}
+
+function applyDeterministicFrenchCleanup(input) {
+  let text = String(input || "");
+  text = applyFrenchContractionRules(text);
+  text = applyFrenchNegationRules(text);
+  text = normalizeFrenchTypography(text);
+  return text;
+}
+
+function buildTranscriptPreviewForCleanup(segments, maxChars) {
+  if (!maxChars || !Array.isArray(segments) || !segments.length) return "";
+  const full = segments.map((s) => String(s?.text || "").trim()).filter(Boolean).join(" ");
+  if (full.length <= maxChars) return full;
+  const headLen = Math.floor(maxChars * 0.62);
+  const tailLen = Math.floor(maxChars * 0.32);
+  const head = full.slice(0, headLen);
+  const tail = full.slice(-tailLen);
+  return `${head} … ${tail}`;
+}
+
+async function cleanSegmentsWithGroq(segments, groqApiKey) {
+  if (!groqApiKey) return { segments, strategy: "none-no-key" };
+  if (!Array.isArray(segments) || !segments.length) return { segments, strategy: "none-empty" };
+
+  const hints = parseGroqCleanupHints();
+  const transcriptPreview = buildTranscriptPreviewForCleanup(segments, GROQ_GLOBAL_CONTEXT_CHARS);
+
+  const payload = {
+    transcriptPreview,
+    hints,
+    segments: segments.map((seg, i) => {
+      const from = Math.max(0, i - GROQ_CONTEXT_WINDOW);
+      const to = Math.min(segments.length, i + GROQ_CONTEXT_WINDOW + 1);
+      return {
+        i,
+        text: String(seg?.text || ""),
+        contextBefore: segments.slice(from, i).map((s) => String(s?.text || "")),
+        contextAfter: segments.slice(i + 1, to).map((s) => String(s?.text || "")),
+      };
+    }),
+  };
+
+  const hintsBlock =
+    hints.length > 0
+      ? ` Indices fournis pour cette émission (priorité si une forme proche apparaît dans le texte): ${hints.join(" | ")}.`
+      : "";
+
+  const systemPrompt =
+    "Tu corriges des segments de transcription FR (sous-titres). Corrige orthographe, accents, accords, apostrophes, contractions et ponctuation. " +
+    "Rétablis la négation (ne/n') uniquement quand c'est évident et non ambigu (ex: c'est pas -> ce n'est pas). " +
+    "Noms propres et personnalités: quand le STT produit une forme phonétiquement proche d'un nom connu (sport, médias, politique) et que transcriptPreview ou le contexte local le rend plausible, corrige vers l'orthographe standard (ex: prénom/nom confondus par homophonie, Matuidi vs Matfidi, Blaise vs Isabelle dans un contexte foot/conjoint). " +
+    "Si le contexte reste ambigu, ne invente pas de nom: garde la forme la plus sûre. " +
+    "Ne paraphrase pas. Ne résume pas. Ne change pas le sens. Ne supprime aucun segment. Ne ajoute pas de tirets de locuteur. " +
+    hintsBlock +
+    " Réponds uniquement en JSON valide avec la clé segments: tableau {i, text} pour chaque index.";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+  try {
+    const baseBody = {
+      model: GROQ_CLEANUP_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content:
+            "Corrige ces segments et garde exactement les mêmes index (0..n-1). " +
+            "N'ajoute pas de labels speaker. N'ajoute pas de timestamp. " +
+            "Le champ transcriptPreview sert uniquement au contexte thématique; ne le recopie pas dans les segments. " +
+            "JSON schema: {\"segments\":[{\"i\":number,\"text\":string},...]}\n" +
+            JSON.stringify(payload),
+        },
+      ],
+    };
+
+    let res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({ ...baseBody, response_format: { type: "json_object" } }),
+    });
+
+    if (!res.ok && res.status === 400) {
+      res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify(baseBody),
+      });
+    }
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`Groq cleanup HTTP ${res.status} ${msg}`.trim());
+    }
+
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content || "";
+    const parsed = parseJsonLoose(content);
+    const fixed = Array.isArray(parsed?.segments) ? parsed.segments : [];
+    if (fixed.length !== segments.length) throw new Error("Groq cleanup segment count mismatch");
+
+    const out = segments.map((seg, i) => {
+      const row = fixed.find((r) => Number(r?.i) === i);
+      const text = applyDeterministicFrenchCleanup(String(row?.text || seg.text || ""));
+      return { ...seg, text: text || String(seg.text || "") };
+    });
+    return { segments: out, strategy: `groq-cleanup-context-${GROQ_CONTEXT_WINDOW}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function transcribeWithGroqAudio(filePath, groqApiKey) {
+  if (!groqApiKey) throw new Error("Groq STT requires API key (header x-groq-api-key or GROQ_API_KEY)");
+
+  const buf = await fs.readFile(filePath);
+  const filename = path.basename(filePath) || "audio.wav";
+  const form = new FormData();
+  form.append("file", new Blob([buf]), filename);
+  form.append("model", GROQ_STT_MODEL);
+  form.append("language", WHISPER_LANGUAGE);
+  form.append("temperature", GROQ_STT_TEMPERATURE);
+  form.append("response_format", "verbose_json");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GROQ_STT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${GROQ_BASE_URL}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${groqApiKey}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Groq STT HTTP ${res.status} ${errText}`.trim());
+    }
+    const payload = await res.json();
+    const segments = parseWhisperJson(payload);
+    if (!segments.length) throw new Error("No transcription segments from Groq");
+    return segments;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function transcribeWithWhisperCpp(filePath) {
+  if (!WHISPER_MODEL_PATH) {
+    throw new Error("WHISPER_MODEL_PATH is required");
+  }
+
+  const outBase = path.join(TMP_DIR, `${Date.now()}-${crypto.randomUUID()}`);
+  const args = [
+    "-m",
+    WHISPER_MODEL_PATH,
+    "-f",
+    filePath,
+    "-l",
+    WHISPER_LANGUAGE,
+    "-bs",
+    String(WHISPER_BEAM_SIZE),
+    "-bo",
+    String(WHISPER_BEST_OF),
+    "-tp",
+    "0",
+    "--output-json",
+    "-of",
+    outBase,
+  ];
+
+  await runCommand(WHISPER_CPP_BIN, args);
+  const jsonPath = `${outBase}.json`;
+  const raw = await fs.readFile(jsonPath, "utf8");
+  const parsed = JSON.parse(raw);
+  const segments = parseWhisperJson(parsed);
+
+  await fs.unlink(jsonPath).catch(() => {});
+  if (!segments.length) throw new Error("No transcription segments produced");
+  return segments;
+}
+
+app.get("/health", (_req, res) => {
+  const sttIsGroq = STT_ENGINE === "groq";
+  res.json({
+    ok: true,
+    sttEngine: STT_ENGINE,
+    groqSttModel: sttIsGroq ? GROQ_STT_MODEL : null,
+    engine: sttIsGroq ? "groq-audio" : "whisper.cpp",
+    modelConfigured: sttIsGroq ? true : Boolean(WHISPER_MODEL_PATH),
+    maxSpeakers: DIARIZATION_MAX_SPEAKERS,
+    diarizationProvider: DIARIZATION_PROVIDER,
+    diarizerUrl: DIARIZATION_PROVIDER === "pyannote-service" ? DIARIZER_URL : null,
+    textCleanupProvider: TEXT_CLEANUP_PROVIDER,
+    groqCleanupModel: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CLEANUP_MODEL : null,
+    groqContextWindow: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CONTEXT_WINDOW : null,
+    groqCleanupHintsConfigured: TEXT_CLEANUP_PROVIDER === "groq" ? parseGroqCleanupHints().length > 0 : null,
+  });
+});
+
+app.post("/api/transcribe", upload.single("file"), async (req, res) => {
+  const uploadedPath = req.file?.path;
+  if (!uploadedPath) {
+    return res.status(400).json({ error: "No file provided" });
+  }
+
+  try {
+    const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
+
+    let segments;
+    let sttStrategy = "whisper-cpp";
+    if (STT_ENGINE === "groq") {
+      try {
+        segments = await transcribeWithGroqAudio(uploadedPath, groqApiKey);
+        sttStrategy = `groq:${GROQ_STT_MODEL}`;
+      } catch (groqErr) {
+        segments = await transcribeWithWhisperCpp(uploadedPath);
+        sttStrategy = "whisper-cpp-fallback-after-groq-stt-failure";
+      }
+    } else {
+      segments = await transcribeWithWhisperCpp(uploadedPath);
+    }
+
+    let diarizedSegments = null;
+    let diarizationStrategy = "none";
+    if (DIARIZATION_PROVIDER === "pyannote-service") {
+      try {
+        const diarizationSegments = await diarizeWithExternalService(uploadedPath);
+        diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
+        diarizationStrategy = "pyannote-service";
+      } catch (err) {
+        const fallback = await applyVoiceAwareDiarization(uploadedPath, segments);
+        diarizedSegments = fallback.segments;
+        diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
+      }
+    } else {
+      const local = await applyVoiceAwareDiarization(uploadedPath, segments);
+      diarizedSegments = local.segments;
+      diarizationStrategy = local.strategy;
+    }
+
+    let finalSegments = diarizedSegments;
+    let textCleanupStrategy = "none";
+    if (TEXT_CLEANUP_PROVIDER === "groq") {
+      try {
+        const cleaned = await cleanSegmentsWithGroq(diarizedSegments, groqApiKey);
+        finalSegments = cleaned.segments;
+        textCleanupStrategy = cleaned.strategy;
+      } catch {
+        finalSegments = diarizedSegments.map((seg) => ({
+          ...seg,
+          text: applyDeterministicFrenchCleanup(String(seg?.text || "")),
+        }));
+        textCleanupStrategy = "groq-failed-deterministic-fallback";
+      }
+    }
+
+    return res.json({
+      segments: finalSegments,
+      meta: {
+        engine: STT_ENGINE === "groq" ? "groq-audio+diarization" : "whisper.cpp",
+        stt: sttStrategy,
+        diarization: diarizationStrategy,
+        language: WHISPER_LANGUAGE,
+        textCleanup: textCleanupStrategy,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: String(err?.message || err) });
+  } finally {
+    await fs.unlink(uploadedPath).catch(() => {});
+  }
+});
+
+app.listen(PORT, async () => {
+  await fs.mkdir(TMP_DIR, { recursive: true }).catch(() => {});
+  console.log(`Backend listening on http://localhost:${PORT}`);
+});

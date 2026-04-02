@@ -7,6 +7,9 @@
   const runBtn = $("runBtn");
   const fileInput = $("fileInput");
   const apiKeyInput = $("apiKeyInput");
+  const localMode = $("localMode");
+  const backendUrlInput = $("backendUrlInput");
+  const backendUrlRow = $("backendUrlRow");
   const dropzone = $("dropzone");
   const extractRow = $("extractRow");
   const extractAudio = $("extractAudio");
@@ -17,6 +20,7 @@
   const progressFill = $("progressFill");
   const progressBar = $("progressBar");
   const progressEta = $("progressEta");
+  const progressRemain = $("progressRemain");
   const actionRow = $("actionRow");
   const dzFileName = $("dzFileName");
   const dzFileMeta = $("dzFileMeta");
@@ -27,6 +31,11 @@
 
   const API_KEY_STORAGE_KEY = "groq_api_key_transcription";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
+  const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
+  const BACKEND_URL_STORAGE_KEY = "local_backend_url";
+  const DEFAULT_BACKEND_URL = "http://localhost:8787";
+  const JOB_STATS_KEY = "transcriptor_job_stats_v1";
+  const JOB_STATS_MAX = 18;
 
   const ETA_TRANSCRIBE = "Transcription en cours...";
   const ETA_FINALIZE = "Finalisation du .srt...";
@@ -35,10 +44,129 @@
   let ffmpegBundlePromise = null;
   let fakeRaf = null;
 
+  function loadJobStats() {
+    try {
+      const raw = localStorage.getItem(JOB_STATS_KEY);
+      const arr = JSON.parse(raw || "[]");
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveJobStats(arr) {
+    localStorage.setItem(JOB_STATS_KEY, JSON.stringify(arr.slice(-JOB_STATS_MAX)));
+  }
+
+  function recordJobStat(bytes, mode, totalMs) {
+    const arr = loadJobStats();
+    arr.push({
+      bytes: Math.max(1, bytes),
+      mode,
+      ms: Math.max(800, totalMs),
+      at: Date.now(),
+    });
+    saveJobStats(arr);
+  }
+
+  function medianLearnedTotalMs(bytes, mode) {
+    const all = loadJobStats().filter((s) => s.mode === mode);
+    if (!all.length) return null;
+    const nearby = all.filter((s) => s.bytes >= bytes * 0.3 && s.bytes <= bytes * 3.5);
+    const pool = nearby.length >= 2 ? nearby : all;
+    const sorted = [...pool].map((s) => s.ms).sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  }
+
+  function heuristicTotalJobMs(bytes, mode, heavyPrep) {
+    const learned = medianLearnedTotalMs(bytes, mode);
+    if (learned) return Math.round(learned * 1.06);
+    const mb = bytes / (1024 * 1024);
+    const prep = heavyPrep ? 18000 : 4500;
+    const upload = Math.min(200000, 2500 + mb * 4000);
+    const server =
+      mode === "local"
+        ? Math.max(35000, 20000 + mb * 15000)
+        : Math.max(25000, 12000 + mb * 3500);
+    return Math.round(prep + upload + server);
+  }
+
+  function formatRemainMs(ms) {
+    if (ms == null || !Number.isFinite(ms)) return "";
+    const s = Math.ceil(ms / 1000);
+    if (s <= 0) return "Bientôt terminé…";
+    if (s < 8) return "Quelques secondes…";
+    if (s < 60) return `≈ ${s} s restantes`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `≈ ${m} min ${String(r).padStart(2, "0")} s`;
+  }
+
+  let remainTimerId = null;
+  let remainCtx = null;
+
+  function stopRemainTimer() {
+    if (remainTimerId) {
+      clearInterval(remainTimerId);
+      remainTimerId = null;
+    }
+    remainCtx = null;
+    if (progressRemain) progressRemain.textContent = "";
+  }
+
+  function tickRemain() {
+    if (!remainCtx || !progressRemain) return;
+    const now = Date.now();
+    let end = remainCtx.predictedEnd;
+
+    if (remainCtx.phase === "upload" && remainCtx.uploadStart && remainCtx.lastLoaded > 2048) {
+      const dt = now - remainCtx.uploadStart;
+      if (dt > 250) {
+        const inst = remainCtx.lastLoaded / dt;
+        remainCtx.smoothBps = remainCtx.smoothBps == null ? inst : remainCtx.smoothBps * 0.82 + inst * 0.18;
+        const leftB = Math.max(0, remainCtx.bytes - remainCtx.lastLoaded);
+        const uploadLeft = (leftB / remainCtx.smoothBps) * 1000;
+        end = Math.max(end, now + uploadLeft + remainCtx.serverAfterUploadMs * 0.92);
+      }
+    }
+
+    if (remainCtx.phase === "server" && remainCtx.serverStart) {
+      const spent = now - remainCtx.serverStart;
+      const left = Math.max(0, remainCtx.serverBudgetMs - spent);
+      end = Math.max(end, now + left + remainCtx.finalizeSlackMs);
+    }
+
+    progressRemain.textContent = formatRemainMs(end - now);
+  }
+
+  function startRemainTimer(ctx) {
+    stopRemainTimer();
+    remainCtx = ctx;
+    tickRemain();
+    remainTimerId = setInterval(tickRemain, 280);
+  }
+
+  function onUploadProgressBytes(loaded) {
+    if (!remainCtx) return;
+    const now = Date.now();
+    if (!remainCtx.uploadStart) remainCtx.uploadStart = now;
+    remainCtx.phase = "upload";
+    remainCtx.lastLoaded = loaded;
+  }
+
+  function onUploadComplete() {
+    if (!remainCtx) return;
+    const now = Date.now();
+    remainCtx.phase = "server";
+    remainCtx.serverStart = now;
+    remainCtx.predictedEnd = Math.max(remainCtx.predictedEnd, now + remainCtx.serverBudgetMs + remainCtx.finalizeSlackMs);
+  }
+
   const ERROR_MESSAGES = {
     NO_SEGMENTS: "Aucun contenu vocal détecté. Vérifie que le fichier contient bien de l'audio.",
     AUTH_ERROR: "L'accès équipe est incorrect. Vérifie-le et relance.",
     NETWORK_ERROR: "La connexion a été interrompue. Vérifie ta connexion et réessaie.",
+    BACKEND_ERROR: "Le backend local a répondu avec une erreur. Vérifie les logs serveur.",
     GENERIC: "Quelque chose s'est mal passé. Actualise la page et réessaie.",
   };
 
@@ -115,6 +243,7 @@
     resetStepper();
     setProgress(0);
     setEta(ETA_TRANSCRIBE);
+    stopRemainTimer();
     refreshRunButton();
   }
 
@@ -131,6 +260,7 @@
     if ((f.type || "").startsWith("video/")) return true;
     return /\.(mp3|mp4|m4a|wav|aac|ogg|webm|mov|mkv)$/i.test(f.name || "");
   };
+  const isWhisperSupportedAudio = (f) => !!f && /\.(mp3|wav|ogg|flac)$/i.test(f.name || "");
 
   const isFileProtocol = () => typeof location !== "undefined" && location.protocol === "file:";
   const assetBase = new URL(".", location.href).href;
@@ -156,8 +286,24 @@
     extractAudio.checked = saved === null ? true : saved === "1";
   }
 
+  const isLocalModeEnabled = () => !!localMode?.checked;
+
+  const getBackendUrl = () => {
+    const raw = String(backendUrlInput?.value || "").trim();
+    return raw || DEFAULT_BACKEND_URL;
+  };
+
+  function syncModeUi() {
+    if (!localMode || !backendUrlRow || !apiKeyInput) return;
+    const local = isLocalModeEnabled();
+    backendUrlRow.classList.toggle("hidden", !local);
+    apiKeyInput.closest(".field")?.classList.toggle("hidden", local);
+  }
+
   function refreshRunButton() {
-    const ok = !!selectedFile && !!apiKeyInput.value.trim();
+    const hasGroqCred = !!apiKeyInput.value.trim();
+    const hasBackendCred = !!getBackendUrl();
+    const ok = !!selectedFile && (isLocalModeEnabled() ? hasBackendCred : hasGroqCred);
     runBtn.disabled = !ok;
     runBtn.setAttribute("aria-disabled", String(!ok));
   }
@@ -203,20 +349,31 @@
     const { ffmpeg, fetchFile } = await loadFfmpeg();
     const ext = ((file.name || "").match(/\.([^.]+)$/) || [, "mp4"])[1].toLowerCase();
     const inName = `in.${ext}`;
-    const outName = "out.m4a";
+    const outName = "out.wav";
     await ffmpeg.writeFile(inName, await fetchFile(file));
     await ffmpeg.deleteFile(outName).catch(() => {});
-    try {
-      await ffmpeg.exec(["-i", inName, "-vn", "-c", "copy", outName]);
-    } catch {
-      await ffmpeg.deleteFile(outName).catch(() => {});
-      await ffmpeg.exec(["-i", inName, "-vn", "-acodec", "aac", "-b:a", "96k", outName]);
-    }
+    await ffmpeg.exec(["-i", inName, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", outName]);
     const data = await ffmpeg.readFile(outName);
     await ffmpeg.deleteFile(inName).catch(() => {});
     await ffmpeg.deleteFile(outName).catch(() => {});
     const base = (file.name || "audio").replace(/\.[^/.]+$/, "") || "audio";
-    return new File([data], `${base}_audio.m4a`, { type: "audio/mp4" });
+    return new File([data], `${base}_audio.wav`, { type: "audio/wav" });
+  }
+
+  async function normalizeAudioForWhisper(file) {
+    if (isWhisperSupportedAudio(file)) return file;
+    const { ffmpeg, fetchFile } = await loadFfmpeg();
+    const ext = ((file.name || "").match(/\.([^.]+)$/) || [, "bin"])[1].toLowerCase();
+    const inName = `in.${ext}`;
+    const outName = "normalized.wav";
+    await ffmpeg.writeFile(inName, await fetchFile(file));
+    await ffmpeg.deleteFile(outName).catch(() => {});
+    await ffmpeg.exec(["-i", inName, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", outName]);
+    const data = await ffmpeg.readFile(outName);
+    await ffmpeg.deleteFile(inName).catch(() => {});
+    await ffmpeg.deleteFile(outName).catch(() => {});
+    const base = (file.name || "audio").replace(/\.[^/.]+$/, "") || "audio";
+    return new File([data], `${base}_normalized.wav`, { type: "audio/wav" });
   }
 
   // ========= API =========
@@ -245,11 +402,45 @@
     });
   }
 
+  function postBackendTranscription(url, formData, onProgress, onComplete, extraHeaders = {}) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      for (const [k, v] of Object.entries(extraHeaders || {})) {
+        if (v) xhr.setRequestHeader(k, String(v));
+      }
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+      };
+      xhr.upload.onload = () => onComplete?.();
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText || "{}"));
+          } catch {
+            reject(new Error("GENERIC"));
+          }
+        } else {
+          reject(new Error("BACKEND_ERROR"));
+        }
+      };
+      xhr.onerror = () => reject(new Error("NETWORK_ERROR"));
+      xhr.send(formData);
+    });
+  }
+
   // ========= SRT logic (unchanged) =========
   const IDEAL_LINE_CHARS = 30, SOFT_LINE_CHARS = 32, HARD_LINE_CHARS = 34;
   const AUTO_WRAP_GUARD_CHARS = 26, PREMIERE_SAFE_LINE_CHARS = 24;
   const IDEAL_CUE_CHARS = 52, HARD_CUE_CHARS = 62;
   const MIN_WORDS_LINE = 2, TARGET_WORDS_LINE = 3, MIN_WORDS_CUE = 4, MAX_WORDS_CUE = 16;
+  const CUE_START_TRIM_SEC = 0.012;
+  const CUE_END_TRIM_SEC = 0;
+  const CUE_END_HOLD_SEC = 0.035;
+  const CUE_PAD_START_SEC = 0.078;
+  const CUE_PAD_END_SEC = 0.045;
+  const MIN_CUE_DURATION_SEC = 0.42;
+  const MIN_CUE_GAP_SEC = 0.008;
 
   const WEAK_ENDS = new Set([
     "de", "du", "des", "le", "la", "les", "un", "une", "a", "au", "aux",
@@ -449,7 +640,60 @@
       start: timings[i].start,
       end: timings[i].end,
       text: formatCueText(ws),
+      speaker: segment.speaker || null,
     }));
+  };
+
+  const refineCueTimeline = (cues) => {
+    if (!Array.isArray(cues) || !cues.length) return [];
+    const refined = [];
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i];
+      const rawStart = Math.max(0, Number(cue.start) || 0);
+      const rawEnd = Math.max(rawStart, Number(cue.end) || rawStart);
+      const rawDur = Math.max(0, rawEnd - rawStart);
+      if (rawDur <= 0) {
+        refined.push({ ...cue, start: rawStart, end: rawEnd });
+        continue;
+      }
+
+      const startTrim = Math.min(CUE_START_TRIM_SEC, rawDur * 0.06);
+      const endTrim = Math.min(CUE_END_TRIM_SEC, rawDur * 0.02);
+      let start = rawStart + startTrim;
+      let end = rawEnd - endTrim;
+
+      if (end - start < MIN_CUE_DURATION_SEC) {
+        const mid = (rawStart + rawEnd) / 2;
+        start = mid - MIN_CUE_DURATION_SEC / 2;
+        end = mid + MIN_CUE_DURATION_SEC / 2;
+      }
+
+      start = Math.max(rawStart, start);
+      end = Math.min(rawEnd, end);
+
+      start = Math.max(0, start - CUE_PAD_START_SEC);
+      end = end + CUE_PAD_END_SEC;
+
+      const prev = refined[i - 1];
+      if (prev) start = Math.max(start, prev.end + MIN_CUE_GAP_SEC);
+
+      const nextRawStart = i < cues.length - 1 ? Math.max(0, Number(cues[i + 1].start) || 0) : Infinity;
+      const maxEndFromNext = nextRawStart - MIN_CUE_GAP_SEC;
+      if (Number.isFinite(maxEndFromNext)) end = Math.min(end + CUE_END_HOLD_SEC, maxEndFromNext);
+      else end += CUE_END_HOLD_SEC;
+
+      if (end - start < 0.2) {
+        start = Math.max(0, rawStart - CUE_PAD_START_SEC * 0.5);
+        if (prev) start = Math.max(start, prev.end + MIN_CUE_GAP_SEC);
+        end = Math.min(rawEnd + CUE_PAD_END_SEC, Number.isFinite(maxEndFromNext) ? maxEndFromNext : rawEnd + CUE_PAD_END_SEC);
+      }
+      if (end - start < 0.12) end = Math.max(start + 0.12, end);
+      if (prev && start < prev.end) start = prev.end;
+      if (end < start) end = start;
+
+      refined.push({ ...cue, start, end });
+    }
+    return refined;
   };
 
   // Guardrails: keep the same assertions
@@ -464,7 +708,34 @@
     );
   })();
 
-  const toSrt = (segments) => segments.flatMap(splitSegmentBalanced).map((seg, i) => `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${seg.text}\n`).join("\n");
+  const toSrt = (segments) =>
+    refineCueTimeline(segments.flatMap(splitSegmentBalanced))
+      .map((seg, i) => `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${seg.text}\n`)
+      .join("\n");
+
+  const normalizeSpeaker = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+    if (/^SPEAKER_\d+$/i.test(raw)) return raw.toUpperCase();
+    const digits = raw.match(/\d+/)?.[0];
+    if (digits) return `SPEAKER_${digits.padStart(2, "0")}`;
+    return raw.toUpperCase().replace(/\s+/g, "_");
+  };
+
+  function toSrtWithSpeakers(segments, opts = {}) {
+    const { labelEveryCue = false } = opts;
+    const cues = refineCueTimeline(segments.flatMap(splitSegmentBalanced));
+    let lastSpeaker = null;
+    return cues
+      .map((seg, i) => {
+        const speaker = normalizeSpeaker(seg.speaker);
+        const shouldLabel = !!speaker && (labelEveryCue || speaker !== lastSpeaker);
+        const line = shouldLabel ? `- ${seg.text}` : seg.text;
+        lastSpeaker = speaker || lastSpeaker;
+        return `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${line}\n`;
+      })
+      .join("\n");
+  }
 
   const download = (content, fileName) => {
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -525,10 +796,29 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
+  const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
+  if (localMode) localMode.checked = savedLocalMode === "1";
+  const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
+  if (backendUrlInput) backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
+  syncModeUi();
+
   apiKeyInput.oninput = () => {
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value.trim());
     refreshRunButton();
   };
+  if (localMode) {
+    localMode.onchange = () => {
+      localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
+      syncModeUi();
+      refreshRunButton();
+    };
+  }
+  if (backendUrlInput) {
+    backendUrlInput.oninput = () => {
+      localStorage.setItem(BACKEND_URL_STORAGE_KEY, String(backendUrlInput.value || "").trim());
+      refreshRunButton();
+    };
+  }
 
   newTranscriptionBtn.onclick = () => {
     setSelectedFile(null);
@@ -563,7 +853,10 @@
   // ========= Run =========
   runBtn.onclick = async () => {
     const apiKey = apiKeyInput.value.trim();
-    if (!selectedFile || !apiKey) return;
+    const localBackendMode = isLocalModeEnabled();
+    const backendUrl = getBackendUrl();
+    if (!selectedFile) return;
+    if (!localBackendMode && !apiKey) return;
 
     runBtn.disabled = true;
     pickBtn.disabled = true;
@@ -579,7 +872,8 @@
     sr("Transcription démarrée.");
 
     const baseName = selectedFile.name.replace(/\.[^/.]+$/, "") || "audio";
-    const estimatedApiMs = Math.max(20000, (selectedFile.size / (1024 * 1024)) * 3000);
+    const modeKey = localBackendMode ? "local" : "cloud";
+    const jobT0 = Date.now();
 
     try {
       // STEP 1 — Préparation
@@ -587,14 +881,41 @@
       setProgress(5);
 
       let fileToSend = selectedFile;
+      let heavyPrep = false;
       if (isVideoFile(selectedFile) && extractAudio.checked && canUseFfmpegExtract()) {
+        heavyPrep = true;
         setEta(ETA_TRANSCRIBE);
         await loadFfmpeg();
         setEta(ETA_TRANSCRIBE);
         fileToSend = await extractAudioTrack(selectedFile);
       }
+      if (localBackendMode && !isWhisperSupportedAudio(fileToSend)) {
+        heavyPrep = true;
+        setEta("Préparation audio pour le backend...");
+        fileToSend = await normalizeAudioForWhisper(fileToSend);
+        setEta(ETA_TRANSCRIBE);
+      }
       setStep("prep", "done");
       setProgress(15);
+
+      const mb = fileToSend.size / (1024 * 1024);
+      const estimatedApiMs = Math.max(20000, mb * (localBackendMode ? 12000 : 3000));
+      const learnedTotal = medianLearnedTotalMs(fileToSend.size, modeKey);
+      const serverBudgetMs = Math.max(15000, learnedTotal ? Math.round(learnedTotal * 0.52) : estimatedApiMs);
+      const predictedTotal = heuristicTotalJobMs(fileToSend.size, modeKey, heavyPrep);
+
+      startRemainTimer({
+        predictedEnd: jobT0 + predictedTotal,
+        bytes: fileToSend.size,
+        phase: "prep",
+        uploadStart: 0,
+        lastLoaded: 0,
+        smoothBps: null,
+        serverAfterUploadMs: serverBudgetMs,
+        serverStart: 0,
+        serverBudgetMs,
+        finalizeSlackMs: 5000,
+      });
 
       // STEP 2 — Envoi
       setStep("upload", "active");
@@ -602,27 +923,50 @@
 
       const formData = new FormData();
       formData.append("file", fileToSend);
-      formData.append("model", "whisper-large-v3-turbo");
-      formData.append("language", "fr");
-      formData.append("temperature", "0");
-      formData.append("response_format", "verbose_json");
+      if (!localBackendMode) {
+        formData.append("model", "whisper-large-v3-turbo");
+        formData.append("language", "fr");
+        formData.append("temperature", "0");
+        formData.append("response_format", "verbose_json");
+      }
 
-      const data = await postTranscription(
-        "https://api.groq.com/openai/v1/audio/transcriptions",
-        apiKey,
-        formData,
-        (p) => {
-          setProgress(15 + p * 45);
-          setEta(ETA_TRANSCRIBE);
-        },
-        () => {
-          setStep("upload", "done");
-          setProgress(60);
-          setStep("transcribe", "active");
-          sr("Fichier envoyé. Transcription IA en cours.");
-          startFakeProgress(60, 90, estimatedApiMs);
-        }
-      );
+      const data = localBackendMode
+        ? await postBackendTranscription(
+            `${backendUrl.replace(/\/$/, "")}/api/transcribe`,
+            formData,
+            (p) => {
+              onUploadProgressBytes(p * fileToSend.size);
+              setProgress(15 + p * 45);
+              setEta(ETA_TRANSCRIBE);
+            },
+            () => {
+              onUploadComplete();
+              setStep("upload", "done");
+              setProgress(60);
+              setStep("transcribe", "active");
+              sr("Fichier envoyé. Backend local en cours.");
+              startFakeProgress(60, 90, estimatedApiMs);
+            },
+            { "x-groq-api-key": apiKey || "" }
+          )
+        : await postTranscription(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            apiKey,
+            formData,
+            (p) => {
+              onUploadProgressBytes(p * fileToSend.size);
+              setProgress(15 + p * 45);
+              setEta(ETA_TRANSCRIBE);
+            },
+            () => {
+              onUploadComplete();
+              setStep("upload", "done");
+              setProgress(60);
+              setStep("transcribe", "active");
+              sr("Fichier envoyé. Transcription IA en cours.");
+              startFakeProgress(60, 90, estimatedApiMs);
+            }
+          );
 
       // STEP 3 — Transcription done
       stopFakeProgress();
@@ -635,12 +979,15 @@
       const segments = Array.isArray(data.segments) ? data.segments : [];
       if (!segments.length) throw new Error("NO_SEGMENTS");
 
-      const srtContent = toSrt(segments);
+      const hasSpeakerData = segments.some((seg) => !!normalizeSpeaker(seg?.speaker));
+      const srtContent = hasSpeakerData ? toSrtWithSpeakers(segments) : toSrt(segments);
       const srtFileName = `${baseName}_transcription.srt`;
       download(srtContent, srtFileName);
 
       setStep("format", "done");
       setProgress(100);
+      recordJobStat(fileToSend.size, modeKey, Date.now() - jobT0);
+      stopRemainTimer();
       setEta("Terminé");
       sr("Transcription terminée. Le fichier .srt a été téléchargé.");
 
@@ -651,6 +998,7 @@
       }, 900);
     } catch (err) {
       stopFakeProgress();
+      stopRemainTimer();
       const activeStep = document.querySelector(".step[data-status='active']");
       if (activeStep) setStep(activeStep.dataset.step, "error");
 
