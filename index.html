@@ -238,6 +238,17 @@
               <label class="field-label" for="backendUrlInput">URL backend</label>
               <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
             </div>
+            <div id="geminiKeyField" class="field hidden">
+              <label class="field-label" for="geminiApiKeyInput">Clé Google AI Studio (Gemini)</label>
+              <input
+                id="geminiApiKeyInput"
+                class="field-input"
+                type="password"
+                autocomplete="off"
+                placeholder="AIza… (si le serveur utilise STT_ENGINE=gemini)"
+              />
+              <p class="option-hint">Envoyée en <code>x-gemini-api-key</code> au backend. Inutile si <code>GEMINI_API_KEY</code> est déjà dans le <code>.env</code> serveur.</p>
+            </div>
           </div>
         </details>
 
@@ -520,6 +531,23 @@
                 </label>
                 <p class="option-hint">Accélère l'envoi pour les épisodes vidéo longs (30 à 60 min).</p>
               </div>
+              <details class="settings-disclosure">
+                <summary class="settings-disclosure-summary"><span class="settings-disclosure-icon" aria-hidden="true">⚙️</span> Options résumé</summary>
+                <div class="settings-disclosure-body">
+                  <div class="field">
+                    <label class="field-label" for="summaryProviderSelect">Moteur du résumé (LLM)</label>
+                    <select id="summaryProviderSelect" class="field-input">
+                      <option value="groq">Groq (Llama)</option>
+                      <option value="gemini">Google Gemini</option>
+                    </select>
+                    <p class="option-hint">Le serveur peut aussi imposer le moteur via <code>SUMMARY_PROVIDER</code> ; l’en-tête envoyé par l’app prend le dessus.</p>
+                  </div>
+                  <div id="geminiKeyRow2" class="field hidden">
+                    <label class="field-label" for="geminiApiKeyInput2">Clé API Google (Gemini)</label>
+                    <input id="geminiApiKeyInput2" class="field-input" type="password" autocomplete="off" placeholder="Optionnel si GEMINI_API_KEY est sur le serveur" />
+                  </div>
+                </div>
+              </details>
               <div class="action-row" id="actionRow2">
                 <button class="btn btn-ghost" id="pickBtn2" type="button">
                   <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">

@@ -14,7 +14,7 @@ Le repo peut utiliser des binaires `whisper.cpp` precompiles pour le mode local 
 
 - `PORT` (defaut `8787`)
 - `FFMPEG_BIN` (defaut `ffmpeg`) — conversion audio → WAV 16 kHz mono pour la diarisation
-- `STT_ENGINE` (`whisper-cpp` ou `groq`) — avec `groq`, meme endpoint que le deploiement `main` (`/audio/transcriptions`, `whisper-large-v3-turbo`, `verbose_json`). Cle: `GROQ_API_KEY` ou header `x-groq-api-key`. Repli automatique sur whisper.cpp si Groq echoue.
+- `STT_ENGINE` (`whisper-cpp`, `groq` ou `gemini`) — avec `groq`, meme endpoint que le deploiement `main` (`/audio/transcriptions`, `whisper-large-v3-turbo`, `verbose_json`). Cle: `GROQ_API_KEY` ou header `x-groq-api-key`. Repli automatique sur whisper.cpp si Groq echoue. Avec `gemini`, transcription + locuteurs via Gemini en **un** appel ; **les timestamps sont inferes par le modele** (souvent imprecis pour du montage) et le texte peut etre paraphrase — pour des **TC fiables**, utiliser `groq` ou `whisper-cpp` + diarization. La diarization pyannote / locale est sautee si `gemini` (deja dans les segments).
 - `GROQ_STT_MODEL` (defaut `whisper-large-v3-turbo`)
 - `GROQ_STT_TEMPERATURE` (defaut `0`)
 - `GROQ_STT_TIMEOUT_MS` (defaut `600000`, fichiers longs)
@@ -22,7 +22,7 @@ Le repo peut utiliser des binaires `whisper.cpp` precompiles pour le mode local 
 - `DIARIZER_URL` (defaut `http://127.0.0.1:8790`)
 - `DIARIZER_API_KEY` (optionnel, recommande)
 - `DIARIZER_TIMEOUT_MS` (defaut `180000`)
-- `TEXT_CLEANUP_PROVIDER` (`none` ou `groq`)
+- `TEXT_CLEANUP_PROVIDER` (`none`, `groq` ou `gemini`)
 - `GROQ_API_KEY` (optionnel, utilise si pas de header `x-groq-api-key`)
 - `GROQ_BASE_URL` (defaut `https://api.groq.com/openai/v1`)
 - `GROQ_CLEANUP_MODEL` (defaut `llama-3.1-8b-instant`)
@@ -30,6 +30,17 @@ Le repo peut utiliser des binaires `whisper.cpp` precompiles pour le mode local 
 - `GROQ_CONTEXT_WINDOW` (defaut `5`, nb de segments de contexte avant/apres)
 - `GROQ_GLOBAL_CONTEXT_CHARS` (defaut `1800`, extrait global de la transcription injecte dans le prompt)
 - `GROQ_CLEANUP_HINTS` (optionnel, noms/sujets separes par virgule pour biaiser les corrections de noms propres sur une emission)
+- `GROQ_SUMMARY_MODEL` / `GROQ_SUMMARY_TEMPERATURE` — résumé d'épisode via Groq (défaut si `SUMMARY_PROVIDER=groq`)
+- `SUMMARY_PROVIDER` (`groq` ou `gemini`) — moteur LLM pour `/api/episode-summary` (surcharge possible via en-tête `x-summary-provider`)
+- `GEMINI_API_KEY` — clé [Google AI Studio](https://aistudio.google.com/) / Gemini API (ou en-tête `x-gemini-api-key`)
+- `GEMINI_API_BASE` (defaut `https://generativelanguage.googleapis.com/v1beta`)
+- `GEMINI_MODEL` — STT audio via Gemini quand `STT_ENGINE=gemini` (defaut `gemini-2.5-flash` ; preview ex. `gemini-3-flash-preview` possible mais plus lent)
+- `GEMINI_DIARIZATION_MODEL` (defaut = `GEMINI_MODEL`) — modele utilise **uniquement** pour l'appel audio supplementaire `GEMINI_DIARIZATION_OVERLAY=1` (interlocuteurs alignes sur les timecodes Groq/whisper). Permet ex. `gemini-3-flash-preview` ou `gemini-3.1-flash-lite-preview` pour les speakers tout en gardant un `GEMINI_MODEL` plus leger si tu passes plus tard en STT Gemini.
+- `GEMINI_SUMMARY_MODEL` (defaut `gemini-2.5-flash`)
+- `GEMINI_SUMMARY_TEMPERATURE` / `GEMINI_TIMEOUT_MS`
+- `GEMINI_CLEANUP_MODEL` / `GEMINI_CLEANUP_TEMPERATURE` — cleanup texte des segments (`TEXT_CLEANUP_PROVIDER=gemini`) sans modifier TC/speakers
+- `GEMINI_DIARIZATION_OVERLAY` (`0`/`1`) — en `STT_ENGINE=groq|whisper-cpp`, conserve les timecodes STT et remplace uniquement les speakers par Gemini (appel supplementaire, modele = `GEMINI_DIARIZATION_MODEL`). Si Gemini échoue, fallback automatique sur la diarization configuree (`pyannote-service` ou `local`).
+- `GEMINI_OVERLAY_MIN_SPEAKER_SEC` / `GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS` / `GEMINI_OVERLAY_SMOOTHING_CONFIDENCE` — réglages anti-fusion des locuteurs rares (3+ intervenants) lors du `gemini-speaker-overlay`.
 - `WHISPER_CPP_BIN` (defaut: binaire local precompile)
 - `WHISPER_MODEL_PATH` (defaut: modele local `ggml-base`)
 - `WHISPER_LANGUAGE` (defaut `fr`)
@@ -122,7 +133,13 @@ Reponse:
 
 ### `POST /api/episode-summary`
 `multipart/form-data` avec champ `file`.
-Header requis: `x-groq-api-key` (ou `GROQ_API_KEY` dans `.env`).
+
+En-têtes / configuration:
+
+- Transcription (étape STT): `x-groq-api-key` ou `GROQ_API_KEY` si `STT_ENGINE=groq` ; sinon whisper.cpp local.
+- Résumé LLM: `SUMMARY_PROVIDER` (`groq` ou `gemini`) dans `.env`, ou en-tête `x-summary-provider: groq|gemini`.
+  - **Groq**: `GROQ_API_KEY` ou `x-groq-api-key` (requis pour l'étape résumé).
+  - **Gemini**: `GEMINI_API_KEY` ou `x-gemini-api-key`.
 
 Reponse:
 
@@ -136,6 +153,7 @@ Reponse:
   },
   "meta": {
     "stt": "groq:whisper-large-v3-turbo",
+    "summaryProvider": "groq",
     "summaryModel": "llama-3.3-70b-versatile",
     "segmentCount": 1342,
     "durationSec": 3589.12,

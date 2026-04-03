@@ -46,6 +46,33 @@ const GROQ_CONTEXT_WINDOW = Math.max(0, Number(process.env.GROQ_CONTEXT_WINDOW |
 const GROQ_GLOBAL_CONTEXT_CHARS = Math.max(0, Number(process.env.GROQ_GLOBAL_CONTEXT_CHARS || 1800));
 const GROQ_SUMMARY_MODEL = String(process.env.GROQ_SUMMARY_MODEL || "llama-3.3-70b-versatile").trim();
 const GROQ_SUMMARY_TEMPERATURE = Number(process.env.GROQ_SUMMARY_TEMPERATURE || 0.2);
+const GEMINI_API_BASE = String(process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta")
+  .trim()
+  .replace(/\/$/, "");
+const GEMINI_SUMMARY_MODEL = String(process.env.GEMINI_SUMMARY_MODEL || "gemini-2.5-flash").trim();
+const GEMINI_SUMMARY_TEMPERATURE = Number(process.env.GEMINI_SUMMARY_TEMPERATURE ?? 0.2);
+const GEMINI_TIMEOUT_MS = Math.max(5000, Number(process.env.GEMINI_TIMEOUT_MS || GROQ_TIMEOUT_MS));
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || "").trim();
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || "gemini-2.5-flash").trim();
+/** Modèle Gemini pour la passe audio de l'overlay interlocuteurs uniquement (défaut = GEMINI_MODEL). */
+const GEMINI_DIARIZATION_MODEL = String(process.env.GEMINI_DIARIZATION_MODEL || GEMINI_MODEL).trim();
+const GEMINI_CLEANUP_MODEL = String(process.env.GEMINI_CLEANUP_MODEL || GEMINI_SUMMARY_MODEL).trim();
+const GEMINI_CLEANUP_TEMPERATURE = Number(process.env.GEMINI_CLEANUP_TEMPERATURE ?? 0);
+const GEMINI_DIARIZATION_OVERLAY = /^(1|true|yes|on)$/i.test(
+  String(process.env.GEMINI_DIARIZATION_OVERLAY || "").trim()
+);
+const GEMINI_OVERLAY_MIN_SPEAKER_SEC = Math.max(
+  0,
+  Number(process.env.GEMINI_OVERLAY_MIN_SPEAKER_SEC || 0.7)
+);
+const GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS = Math.max(
+  1,
+  Number(process.env.GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS || 1)
+);
+const GEMINI_OVERLAY_SMOOTHING_CONFIDENCE = Math.min(
+  0.95,
+  Math.max(0, Number(process.env.GEMINI_OVERLAY_SMOOTHING_CONFIDENCE || 0.4))
+);
 const SUMMARY_CHUNK_TARGET_CHARS = Math.max(2000, Number(process.env.SUMMARY_CHUNK_TARGET_CHARS || 12000));
 const SUMMARY_MAX_CHUNKS = Math.max(2, Number(process.env.SUMMARY_MAX_CHUNKS || 24));
 function parseGroqCleanupHints() {
@@ -758,6 +785,96 @@ async function cleanSegmentsWithGroq(segments, groqApiKey) {
   }
 }
 
+async function cleanSegmentsWithGemini(segments, geminiApiKey) {
+  if (!geminiApiKey) return { segments, strategy: "none-no-key" };
+  if (!Array.isArray(segments) || !segments.length) return { segments, strategy: "none-empty" };
+
+  const hints = parseGroqCleanupHints();
+  const transcriptPreview = buildTranscriptPreviewForCleanup(segments, GROQ_GLOBAL_CONTEXT_CHARS);
+  const payload = {
+    transcriptPreview,
+    hints,
+    segments: segments.map((seg, i) => {
+      const from = Math.max(0, i - GROQ_CONTEXT_WINDOW);
+      const to = Math.min(segments.length, i + GROQ_CONTEXT_WINDOW + 1);
+      return {
+        i,
+        text: String(seg?.text || ""),
+        contextBefore: segments.slice(from, i).map((s) => String(s?.text || "")),
+        contextAfter: segments.slice(i + 1, to).map((s) => String(s?.text || "")),
+      };
+    }),
+  };
+
+  const hintsBlock =
+    hints.length > 0
+      ? `Indices fournis pour cette émission (priorité si une forme proche apparaît): ${hints.join(" | ")}.`
+      : "";
+  const systemPrompt =
+    "Tu corriges des segments de transcription FR (sous-titres). Corrige uniquement orthographe, accents, accords, apostrophes, contractions et ponctuation. " +
+    "Rétablis la négation (ne/n') seulement quand c'est évident et sans ambiguïté. " +
+    "Noms propres: corrige uniquement quand le contexte local + transcriptPreview le rendent plausible. " +
+    "Ne paraphrase pas, ne résume pas, ne change pas le sens. Ne modifie jamais l'ordre des segments. " +
+    "Réponds uniquement en JSON valide: {\"segments\":[{\"i\":number,\"text\":string},...]} " +
+    hintsBlock;
+  const userPrompt =
+    "Corrige ces segments et conserve strictement les mêmes index. " +
+    "N'ajoute pas de speaker ni de timestamps.\n" +
+    JSON.stringify(payload);
+
+  const model = GEMINI_CLEANUP_MODEL;
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  try {
+    async function doFetch(jsonMode) {
+      const generationConfig = mergeGeminiGenerationConfig(
+        jsonMode
+          ? { temperature: GEMINI_CLEANUP_TEMPERATURE, responseMimeType: "application/json" }
+          : { temperature: GEMINI_CLEANUP_TEMPERATURE },
+        model
+      );
+      return fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig,
+        }),
+        signal: controller.signal,
+      });
+    }
+
+    let res = await doFetch(true);
+    if (!res.ok && res.status === 400) {
+      res = await doFetch(false);
+    }
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`Gemini cleanup HTTP ${res.status} ${msg}`.trim());
+    }
+    const data = await res.json();
+    const block = data?.promptFeedback?.blockReason;
+    if (block) throw new Error(`Gemini cleanup blocked: ${block}`);
+    const text = extractGeminiCandidateText(data);
+    if (!text) throw new Error(`Gemini cleanup empty response (${geminiResponseErrorHint(data) || "no text"})`);
+
+    const parsed = parseJsonLoose(text);
+    const fixed = Array.isArray(parsed?.segments) ? parsed.segments : [];
+    if (fixed.length !== segments.length) throw new Error("Gemini cleanup segment count mismatch");
+
+    const out = segments.map((seg, i) => {
+      const row = fixed.find((r) => Number(r?.i) === i);
+      const t = applyDeterministicFrenchCleanup(String(row?.text || seg.text || ""));
+      return { ...seg, text: t || String(seg.text || "") };
+    });
+    return { segments: out, strategy: "gemini-cleanup-context" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function chunkSegmentsForSummary(segments, targetChars = SUMMARY_CHUNK_TARGET_CHARS) {
   const out = [];
   let cur = [];
@@ -794,6 +911,138 @@ function normalizeEpisodeSummaryPayload(payload, fallbackText = "") {
     keyPoints: keyPoints.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12),
     characters: characters.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 24),
   };
+}
+
+/** Gemini 3 : thinking par défaut = lent / parts atypiques ; `minimal` limite latence et stabilise la sortie texte. */
+function mergeGeminiGenerationConfig(base, modelId) {
+  const m = String(modelId || "").toLowerCase();
+  if (!m.includes("gemini-3")) return base;
+  return {
+    ...base,
+    thinkingConfig: { thinkingLevel: "minimal" },
+  };
+}
+
+function extractGeminiCandidateText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => typeof p?.text === "string")
+    .map((p) => p.text)
+    .join("")
+    .trim();
+}
+
+function geminiResponseErrorHint(data) {
+  if (data?.error?.message) return String(data.error.message);
+  if (data?.promptFeedback?.blockReason) return `blocked: ${data.promptFeedback.blockReason}`;
+  if (!Array.isArray(data?.candidates) || data.candidates.length === 0) return "no candidates";
+  return "";
+}
+
+async function geminiGenerateSummaryJson(apiKey, systemPrompt, userPrompt, errorCtx) {
+  const model = GEMINI_SUMMARY_MODEL;
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const base = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+  };
+  async function doFetch(jsonMode) {
+    const generationConfig = mergeGeminiGenerationConfig(
+      jsonMode
+        ? { temperature: GEMINI_SUMMARY_TEMPERATURE, responseMimeType: "application/json" }
+        : { temperature: GEMINI_SUMMARY_TEMPERATURE },
+      model
+    );
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...base, generationConfig }),
+      signal: controller.signal,
+    });
+  }
+  try {
+    let res = await doFetch(true);
+    if (!res.ok && res.status === 400) {
+      res = await doFetch(false);
+    }
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`Gemini ${errorCtx} HTTP ${res.status} ${msg}`.trim());
+    }
+    const data = await res.json();
+    const block = data?.promptFeedback?.blockReason;
+    if (block) throw new Error(`Gemini ${errorCtx} blocked: ${block}`);
+    const finish = data?.candidates?.[0]?.finishReason;
+    if (finish === "SAFETY" || finish === "RECITATION") {
+      throw new Error(`Gemini ${errorCtx} finish: ${finish}`);
+    }
+    const text = extractGeminiCandidateText(data);
+    if (!text) {
+      const hint = geminiResponseErrorHint(data);
+      throw new Error(`Gemini ${errorCtx} empty response${hint ? ` (${hint})` : ""}`);
+    }
+    return parseJsonLoose(text);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function summarizeEpisodeWithGemini(segments, geminiApiKey, titleHint = "episode") {
+  if (!geminiApiKey) throw new Error("Episode summary (Gemini) requires GEMINI_API_KEY or x-gemini-api-key");
+  const chunks = chunkSegmentsForSummary(segments);
+  if (!chunks.length) throw new Error("No transcript chunks available");
+
+  const chunkSummaries = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const rows = chunks[i];
+    const transcript = rows.map((s) => String(s?.text || "").trim()).filter(Boolean).join(" ");
+    const start = Number(rows[0]?.start || 0);
+    const end = Number(rows[rows.length - 1]?.end || start);
+    const systemPrompt =
+      "Tu es un analyste éditorial de séries. Tu résumes un extrait de transcription sans inventer de faits. " +
+      "Réponds uniquement en JSON valide: {\"short\":\"...\",\"long\":\"...\",\"key_points\":[...],\"characters\":[...]}.";
+    const userPrompt =
+      `Titre: ${titleHint}\n` +
+      `Chunk ${i + 1}/${chunks.length} (${start.toFixed(1)}s -> ${end.toFixed(1)}s)\n` +
+      "Instructions:\n" +
+      "- Français naturel\n" +
+      "- Conserver les faits et enjeux narratifs\n" +
+      "- 3 à 6 points clés max\n\n" +
+      transcript;
+
+    const parsed = await geminiGenerateSummaryJson(
+      geminiApiKey,
+      systemPrompt,
+      userPrompt,
+      `summary chunk ${i + 1}/${chunks.length}`
+    );
+    chunkSummaries.push(normalizeEpisodeSummaryPayload(parsed, transcript.slice(0, 500)));
+  }
+
+  const reduceInput = chunkSummaries
+    .map(
+      (c, i) =>
+        `Chunk ${i + 1}\nshort: ${c.short}\nlong: ${c.long}\nkey_points: ${JSON.stringify(c.keyPoints)}\ncharacters: ${JSON.stringify(c.characters)}`
+    )
+    .join("\n\n");
+  const systemPrompt =
+    "Tu fusionnes des résumés de chunks en un résumé d'épisode. Ne pas inventer. " +
+    "Réponds uniquement en JSON: {\"short\":\"...\",\"long\":\"...\",\"key_points\":[...],\"characters\":[...]}.";
+  const userPrompt =
+    `Titre: ${titleHint}\n` +
+    "Produit:\n" +
+    "- short: 3 à 5 phrases max\n" +
+    "- long: 1 à 3 paragraphes\n" +
+    "- key_points: 5 à 10 points\n" +
+    "- characters: noms pertinents\n\n" +
+    reduceInput;
+
+  const parsed = await geminiGenerateSummaryJson(geminiApiKey, systemPrompt, userPrompt, "summary reduce");
+  const normalized = normalizeEpisodeSummaryPayload(parsed, chunkSummaries.map((c) => c.short).join(" "));
+  return { ...normalized, chunkCount: chunkSummaries.length };
 }
 
 async function summarizeEpisodeWithGroq(segments, groqApiKey, titleHint = "episode") {
@@ -942,6 +1191,213 @@ async function summarizeEpisodeWithGroq(segments, groqApiKey, titleHint = "episo
   }
 }
 
+function normalizeGeminiSttSegmentsFromPayload(parsed) {
+  const arr = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.segments)
+      ? parsed.segments
+      : null;
+  if (!arr) throw new Error("Gemini STT: la réponse JSON doit être un tableau de segments");
+
+  const out = [];
+  for (const row of arr) {
+    const text = String(row?.text || "").trim();
+    if (!text) continue;
+    const start = Number(row?.start);
+    const end = Number(row?.end);
+    const speakerRaw = String(row?.speaker || "Speaker 1").trim() || "Speaker 1";
+    out.push({
+      start: Number.isFinite(start) ? Math.max(0, start) : 0,
+      end: Number.isFinite(end) ? Math.max(0, end) : 0,
+      text,
+      speaker: speakerRaw,
+    });
+  }
+  if (!out.length) throw new Error("Gemini STT: aucun segment texte exploitable");
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
+function normalizeSpeakerToken(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^SPEAKER_\d+$/i.test(raw)) {
+    const n = Number(raw.match(/\d+/)?.[0] || 0);
+    return `SPEAKER_${String(Math.max(0, n)).padStart(2, "0")}`;
+  }
+  const m = raw.match(/speaker\D*(\d+)/i);
+  if (m) {
+    const n = Math.max(0, Number(m[1]) - 1);
+    return `SPEAKER_${String(n).padStart(2, "0")}`;
+  }
+  return raw.toUpperCase().replace(/\s+/g, "_");
+}
+
+function applyGeminiSpeakerOverlay(baseSegments, geminiSegments) {
+  const base = Array.isArray(baseSegments) ? baseSegments : [];
+  const ref = Array.isArray(geminiSegments) ? geminiSegments : [];
+  if (!base.length || !ref.length) return base;
+
+  const aliasMap = new Map();
+  let aliasIdx = 0;
+  const canonical = (label) => {
+    const token = normalizeSpeakerToken(label) || "SPEAKER_00";
+    if (/^SPEAKER_\d+$/i.test(token)) return token;
+    if (!aliasMap.has(token)) {
+      aliasMap.set(token, `SPEAKER_${String(aliasIdx).padStart(2, "0")}`);
+      aliasIdx += 1;
+    }
+    return aliasMap.get(token);
+  };
+
+  const labels = [];
+  const confidence = [];
+  const assignedDuration = new Map();
+  const assignedCount = new Map();
+  const assignedConfidenceSum = new Map();
+  for (let i = 0; i < base.length; i++) {
+    const b = base[i];
+    const bs = Math.max(0, Number(b?.start || 0));
+    const be = Math.max(bs, Number(b?.end || bs));
+    const dur = Math.max(0.01, be - bs);
+    const score = new Map();
+    for (const g of ref) {
+      const gs = Math.max(0, Number(g?.start || 0));
+      const ge = Math.max(gs, Number(g?.end || gs));
+      const overlap = Math.max(0, Math.min(be, ge) - Math.max(bs, gs));
+      if (overlap <= 0) continue;
+      const spk = canonical(g?.speaker || "SPEAKER_00");
+      score.set(spk, (score.get(spk) || 0) + overlap);
+    }
+    let best = "";
+    let bestN = -1;
+    for (const [k, v] of score.entries()) {
+      if (v > bestN) {
+        bestN = v;
+        best = k;
+      }
+    }
+    if (!best) best = normalizeSpeakerToken(b?.speaker) || "SPEAKER_00";
+    const conf = bestN > 0 ? Math.min(1, bestN / dur) : 0;
+    labels.push(best);
+    confidence.push(conf);
+    assignedDuration.set(best, (assignedDuration.get(best) || 0) + Math.max(0, bestN));
+    assignedCount.set(best, (assignedCount.get(best) || 0) + 1);
+    assignedConfidenceSum.set(best, (assignedConfidenceSum.get(best) || 0) + conf);
+  }
+
+  const protectedSpeakers = new Set();
+  for (const [spk, totalDur] of assignedDuration.entries()) {
+    const count = assignedCount.get(spk) || 0;
+    const meanConf = (assignedConfidenceSum.get(spk) || 0) / Math.max(1, count);
+    if (
+      totalDur >= GEMINI_OVERLAY_MIN_SPEAKER_SEC ||
+      (count >= GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS && meanConf >= 0.22)
+    ) {
+      protectedSpeakers.add(spk);
+    }
+  }
+
+  // Smooth single-segment speaker flips when surrounding context is stable.
+  for (let i = 1; i < labels.length - 1; i++) {
+    if (
+      labels[i - 1] === labels[i + 1] &&
+      labels[i] !== labels[i - 1] &&
+      confidence[i] < GEMINI_OVERLAY_SMOOTHING_CONFIDENCE &&
+      !protectedSpeakers.has(labels[i])
+    ) {
+      labels[i] = labels[i - 1];
+    }
+  }
+
+  return base.map((seg, i) => ({ ...seg, speaker: labels[i] || "SPEAKER_00" }));
+}
+
+async function transcribeWithGemini(filePath, apiKey, modelId) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Gemini STT requires API key (header x-gemini-api-key or GEMINI_API_KEY)");
+  const model = String(modelId || GEMINI_MODEL).trim() || GEMINI_MODEL;
+
+  const wavForGemini = await ensureWavForDiarization(filePath);
+  let cleanupWav = wavForGemini.cleanup;
+  try {
+    const buf = await fs.readFile(wavForGemini.path);
+    const b64 = buf.toString("base64");
+    const systemPrompt =
+      "Tu es un assistant de transcription audio professionnel.\n" +
+      "Transcris cet audio en français avec précision.\n" +
+      "Identifie les différents interlocuteurs (Speaker 1, Speaker 2, etc.).\n" +
+      "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
+      '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
+      "Les timestamps sont en secondes. Sois précis à 0.1 seconde près.";
+    const userHint =
+      "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre.";
+
+    const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+    const baseParts = [
+      {
+        inlineData: {
+          mimeType: "audio/wav",
+          data: b64,
+        },
+      },
+      { text: userHint },
+    ];
+    const baseBody = {
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: baseParts }],
+      generationConfig: mergeGeminiGenerationConfig(
+        {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+        model
+      ),
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GROQ_STT_TIMEOUT_MS);
+    try {
+      async function doFetch(body) {
+        return fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      }
+
+      let res = await doFetch(baseBody);
+      if (!res.ok && res.status === 400) {
+        const fallbackBody = {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: baseParts }],
+          generationConfig: mergeGeminiGenerationConfig({ temperature: 0.2 }, model),
+        };
+        res = await doFetch(fallbackBody);
+      }
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(`Gemini STT HTTP ${res.status} ${msg}`.trim());
+      }
+      const data = await res.json();
+      const block = data?.promptFeedback?.blockReason;
+      if (block) throw new Error(`Gemini STT blocked: ${block}`);
+      const text = extractGeminiCandidateText(data);
+      if (!text) {
+        const hint = geminiResponseErrorHint(data);
+        throw new Error(`Gemini STT empty response${hint ? ` (${hint})` : ""}`);
+      }
+      const parsed = parseJsonLoose(text);
+      return normalizeGeminiSttSegmentsFromPayload(parsed);
+    } finally {
+      clearTimeout(timeout);
+    }
+  } finally {
+    if (cleanupWav) await cleanupWav();
+  }
+}
+
 async function transcribeWithGroqAudio(filePath, groqApiKey) {
   if (!groqApiKey) throw new Error("Groq STT requires API key (header x-groq-api-key or GROQ_API_KEY)");
 
@@ -1013,20 +1469,30 @@ async function transcribeWithWhisperCpp(filePath) {
 
 app.get("/health", (_req, res) => {
   const sttIsGroq = STT_ENGINE === "groq";
+  const sttIsGemini = STT_ENGINE === "gemini";
   res.json({
     ok: true,
     sttEngine: STT_ENGINE,
     groqSttModel: sttIsGroq ? GROQ_STT_MODEL : null,
-    engine: sttIsGroq ? "groq-audio" : "whisper.cpp",
-    modelConfigured: sttIsGroq ? true : Boolean(WHISPER_MODEL_PATH),
+    geminiSttModel: sttIsGemini ? GEMINI_MODEL : null,
+    engine: sttIsGemini ? "gemini-audio" : sttIsGroq ? "groq-audio" : "whisper.cpp",
+    modelConfigured: sttIsGemini ? true : sttIsGroq ? true : Boolean(WHISPER_MODEL_PATH),
     maxSpeakers: DIARIZATION_MAX_SPEAKERS,
     diarizationProvider: DIARIZATION_PROVIDER,
     diarizerUrl: DIARIZATION_PROVIDER === "pyannote-service" ? DIARIZER_URL : null,
     textCleanupProvider: TEXT_CLEANUP_PROVIDER,
     groqCleanupModel: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CLEANUP_MODEL : null,
+    geminiCleanupModel: TEXT_CLEANUP_PROVIDER === "gemini" ? GEMINI_CLEANUP_MODEL : null,
     groqContextWindow: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CONTEXT_WINDOW : null,
     groqCleanupHintsConfigured: TEXT_CLEANUP_PROVIDER === "groq" ? parseGroqCleanupHints().length > 0 : null,
     groqSummaryModel: GROQ_SUMMARY_MODEL,
+    summaryProviderDefault: String(process.env.SUMMARY_PROVIDER || "groq").trim().toLowerCase() || "groq",
+    geminiSummaryModel: GEMINI_SUMMARY_MODEL,
+    geminiDiarizationOverlay: GEMINI_DIARIZATION_OVERLAY,
+    geminiDiarizationModel: GEMINI_DIARIZATION_MODEL,
+    geminiOverlayMinSpeakerSec: GEMINI_OVERLAY_MIN_SPEAKER_SEC,
+    geminiOverlayMinSpeakerSegments: GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS,
+    geminiOverlaySmoothingConfidence: GEMINI_OVERLAY_SMOOTHING_CONFIDENCE,
   });
 });
 
@@ -1038,10 +1504,14 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 
   try {
     const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
+    const geminiKeyForReq = String(req.headers["x-gemini-api-key"] || GEMINI_API_KEY || "").trim();
 
     let segments;
     let sttStrategy = "whisper-cpp";
-    if (STT_ENGINE === "groq") {
+    if (STT_ENGINE === "gemini") {
+      segments = await transcribeWithGemini(uploadedPath, geminiKeyForReq);
+      sttStrategy = `gemini:${GEMINI_MODEL}`;
+    } else if (STT_ENGINE === "groq") {
       try {
         segments = await transcribeWithGroqAudio(uploadedPath, groqApiKey);
         sttStrategy = `groq:${GROQ_STT_MODEL}`;
@@ -1053,11 +1523,26 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
       segments = await transcribeWithWhisperCpp(uploadedPath);
     }
 
+    let geminiOverlaySegments = null;
+    if (STT_ENGINE !== "gemini" && GEMINI_DIARIZATION_OVERLAY && geminiKeyForReq) {
+      try {
+        geminiOverlaySegments = await transcribeWithGemini(uploadedPath, geminiKeyForReq, GEMINI_DIARIZATION_MODEL);
+      } catch (err) {
+        console.warn("[diarization] gemini-overlay:", String(err?.message || err));
+      }
+    }
+
     const wavForDiar = await ensureWavForDiarization(uploadedPath);
     let diarizedSegments = null;
     let diarizationStrategy = "none";
     try {
-      if (DIARIZATION_PROVIDER === "pyannote-service") {
+      if (STT_ENGINE === "gemini") {
+        diarizedSegments = segments;
+        diarizationStrategy = "gemini-inline";
+      } else if (Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length) {
+        diarizedSegments = applyGeminiSpeakerOverlay(segments, geminiOverlaySegments);
+        diarizationStrategy = "gemini-speaker-overlay";
+      } else if (DIARIZATION_PROVIDER === "pyannote-service") {
         try {
           const diarizationSegments = await diarizeWithExternalService(wavForDiar.path);
           diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
@@ -1079,7 +1564,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 
     let finalSegments = diarizedSegments;
     let textCleanupStrategy = "none";
-    if (TEXT_CLEANUP_PROVIDER === "groq") {
+    if (TEXT_CLEANUP_PROVIDER === "groq" && STT_ENGINE !== "gemini") {
       try {
         const cleaned = await cleanSegmentsWithGroq(diarizedSegments, groqApiKey);
         finalSegments = cleaned.segments;
@@ -1091,14 +1576,34 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
         }));
         textCleanupStrategy = "groq-failed-deterministic-fallback";
       }
+    } else if (TEXT_CLEANUP_PROVIDER === "gemini") {
+      try {
+        const cleaned = await cleanSegmentsWithGemini(diarizedSegments, geminiKeyForReq);
+        finalSegments = cleaned.segments;
+        textCleanupStrategy = cleaned.strategy;
+      } catch {
+        finalSegments = diarizedSegments.map((seg) => ({
+          ...seg,
+          text: applyDeterministicFrenchCleanup(String(seg?.text || "")),
+        }));
+        textCleanupStrategy = "gemini-failed-deterministic-fallback";
+      }
     }
 
     return res.json({
       segments: finalSegments,
       meta: {
-        engine: STT_ENGINE === "groq" ? "groq-audio+diarization" : "whisper.cpp",
+        engine:
+          STT_ENGINE === "gemini"
+            ? "gemini-audio+inline-diarization"
+            : STT_ENGINE === "groq"
+              ? "groq-audio+diarization"
+              : "whisper.cpp",
         stt: sttStrategy,
         diarization: diarizationStrategy,
+        ...(Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length
+          ? { geminiSpeakerModel: GEMINI_DIARIZATION_MODEL }
+          : {}),
         language: WHISPER_LANGUAGE,
         textCleanup: textCleanupStrategy,
       },
@@ -1118,9 +1623,13 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
 
   try {
     const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
+    const geminiKeyForReq = String(req.headers["x-gemini-api-key"] || GEMINI_API_KEY || "").trim();
     let segments;
     let sttStrategy = "whisper-cpp";
-    if (STT_ENGINE === "groq") {
+    if (STT_ENGINE === "gemini") {
+      segments = await transcribeWithGemini(uploadedPath, geminiKeyForReq);
+      sttStrategy = `gemini:${GEMINI_MODEL}`;
+    } else if (STT_ENGINE === "groq") {
       try {
         segments = await transcribeWithGroqAudio(uploadedPath, groqApiKey);
         sttStrategy = `groq:${GROQ_STT_MODEL}`;
@@ -1137,7 +1646,30 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
     }
 
     const titleHint = String(req.file?.originalname || "episode").replace(/\.[^/.]+$/, "");
-    const summary = await summarizeEpisodeWithGroq(segments, groqApiKey, titleHint);
+    const summaryProvider = String(
+      req.headers["x-summary-provider"] || process.env.SUMMARY_PROVIDER || "groq"
+    )
+      .trim()
+      .toLowerCase();
+    const geminiApiKey = geminiKeyForReq;
+
+    let summary;
+    let summaryEngine;
+    let summaryModelName;
+    if (summaryProvider === "gemini") {
+      if (!geminiApiKey) {
+        return res.status(400).json({
+          error: "Résumé Gemini: définir GEMINI_API_KEY (serveur) ou en-tête x-gemini-api-key",
+        });
+      }
+      summary = await summarizeEpisodeWithGemini(segments, geminiApiKey, titleHint);
+      summaryEngine = "gemini";
+      summaryModelName = GEMINI_SUMMARY_MODEL;
+    } else {
+      summary = await summarizeEpisodeWithGroq(segments, groqApiKey, titleHint);
+      summaryEngine = "groq";
+      summaryModelName = GROQ_SUMMARY_MODEL;
+    }
     const durationSec = Math.max(0, Number(segments[segments.length - 1]?.end || 0));
 
     return res.json({
@@ -1149,7 +1681,8 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
       },
       meta: {
         stt: sttStrategy,
-        summaryModel: GROQ_SUMMARY_MODEL,
+        summaryProvider: summaryEngine,
+        summaryModel: summaryModelName,
         segmentCount: segments.length,
         durationSec,
         chunkCount: summary.chunkCount,
