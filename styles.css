@@ -93,6 +93,71 @@ body {
   display: flex;
 }
 
+body.app-locked .sidebar,
+body.app-locked .app-shell {
+  pointer-events: none;
+  user-select: none;
+  filter: blur(1.8px);
+}
+
+/* ===== PIN gate ===== */
+.pin-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 18, 23, 0.75);
+  backdrop-filter: blur(6px);
+}
+.pin-card {
+  width: min(420px, 100%);
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: linear-gradient(170deg, rgba(57,62,70,0.95), rgba(34,40,49,0.96));
+  padding: 18px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+}
+.pin-kicker {
+  margin: 0 0 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.pin-title {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--text);
+}
+.pin-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.pin-form {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pin-input {
+  letter-spacing: 0.18em;
+  font-family: var(--font-mono);
+}
+.pin-submit {
+  margin-top: 2px;
+}
+.pin-error {
+  margin: -2px 0 0;
+  font-size: 0.8rem;
+  color: var(--err);
+}
+
 /* ===== SIDEBAR ===== */
 .sidebar {
   width: 220px;
@@ -715,6 +780,45 @@ body {
 .export-success-sub   { font-size: 0.82rem; color: var(--text-secondary); margin: 0; }
 .export-actions { display: flex; justify-content: flex-end; }
 
+.summary-block {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(223,208,184,0.05);
+}
+.summary-block-title {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.summary-block-text {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.summary-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.summary-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 /* Review panel */
 .review-head {
   display: flex;
@@ -823,6 +927,10 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 3px;
+}
+.review-caption-speaker:empty {
+  display: none;
+  margin-bottom: 0;
 }
 .review-caption-text {
   font-size: 0.9rem;

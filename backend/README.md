@@ -46,7 +46,7 @@ Le repo peut utiliser des binaires `whisper.cpp` precompiles pour le mode local 
 - `DIARIZATION_CONTINUITY_BONUS` (defaut `0.2`)
 - `WHISPER_BEAM_SIZE` (defaut `8`)
 - `WHISPER_BEST_OF` (defaut `8`)
-- `MAX_FILE_MB` (defaut `600`)
+- `MAX_FILE_MB` (defaut `600` dans le code si absent ; en prod épisodes longs, monter ex. `10240` ≈ 10 Go — aligner aussi `client_max_body_size` sous Nginx)
 
 ## Lancement
 
@@ -119,3 +119,27 @@ Reponse:
 ```
 
 > Note: en `DIARIZATION_PROVIDER=local`, le backend utilise un clustering de features de voix (2 locuteurs robustes) avec fallback. En `pyannote-service`, il utilise le diarizer dedie (recommande pour >2 locuteurs) puis fallback local en cas d'indisponibilite.
+
+### `POST /api/episode-summary`
+`multipart/form-data` avec champ `file`.
+Header requis: `x-groq-api-key` (ou `GROQ_API_KEY` dans `.env`).
+
+Reponse:
+
+```json
+{
+  "summary": {
+    "short": "Résumé court de l'épisode...",
+    "long": "Résumé détaillé de l'épisode...",
+    "keyPoints": ["Point clé 1", "Point clé 2"],
+    "characters": ["Personnage A", "Personnage B"]
+  },
+  "meta": {
+    "stt": "groq:whisper-large-v3-turbo",
+    "summaryModel": "llama-3.3-70b-versatile",
+    "segmentCount": 1342,
+    "durationSec": 3589.12,
+    "chunkCount": 7
+  }
+}
+```

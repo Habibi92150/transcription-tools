@@ -44,6 +44,10 @@ const GROQ_CLEANUP_MODEL = String(process.env.GROQ_CLEANUP_MODEL || "llama-3.1-8
 const GROQ_TIMEOUT_MS = Math.max(5000, Number(process.env.GROQ_TIMEOUT_MS || 60000));
 const GROQ_CONTEXT_WINDOW = Math.max(0, Number(process.env.GROQ_CONTEXT_WINDOW || 5));
 const GROQ_GLOBAL_CONTEXT_CHARS = Math.max(0, Number(process.env.GROQ_GLOBAL_CONTEXT_CHARS || 1800));
+const GROQ_SUMMARY_MODEL = String(process.env.GROQ_SUMMARY_MODEL || "llama-3.3-70b-versatile").trim();
+const GROQ_SUMMARY_TEMPERATURE = Number(process.env.GROQ_SUMMARY_TEMPERATURE || 0.2);
+const SUMMARY_CHUNK_TARGET_CHARS = Math.max(2000, Number(process.env.SUMMARY_CHUNK_TARGET_CHARS || 12000));
+const SUMMARY_MAX_CHUNKS = Math.max(2, Number(process.env.SUMMARY_MAX_CHUNKS || 24));
 function parseGroqCleanupHints() {
   const raw = String(process.env.GROQ_CLEANUP_HINTS || "");
   return raw
@@ -754,6 +758,190 @@ async function cleanSegmentsWithGroq(segments, groqApiKey) {
   }
 }
 
+function chunkSegmentsForSummary(segments, targetChars = SUMMARY_CHUNK_TARGET_CHARS) {
+  const out = [];
+  let cur = [];
+  let curChars = 0;
+  for (const seg of Array.isArray(segments) ? segments : []) {
+    const text = String(seg?.text || "").trim();
+    if (!text) continue;
+    const rowChars = text.length + 24;
+    if (cur.length && curChars + rowChars > targetChars) {
+      out.push(cur);
+      cur = [];
+      curChars = 0;
+    }
+    cur.push(seg);
+    curChars += rowChars;
+  }
+  if (cur.length) out.push(cur);
+  return out.slice(0, SUMMARY_MAX_CHUNKS);
+}
+
+function normalizeEpisodeSummaryPayload(payload, fallbackText = "") {
+  const short = String(payload?.short || payload?.summary_short || "").trim();
+  const long = String(payload?.long || payload?.summary_long || "").trim();
+  const keyPoints = Array.isArray(payload?.key_points)
+    ? payload.key_points
+    : Array.isArray(payload?.keyPoints)
+      ? payload.keyPoints
+      : [];
+  const characters = Array.isArray(payload?.characters) ? payload.characters : [];
+  const fallback = String(fallbackText || "").trim();
+  return {
+    short: short || fallback.slice(0, 280),
+    long: long || fallback,
+    keyPoints: keyPoints.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12),
+    characters: characters.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 24),
+  };
+}
+
+async function summarizeEpisodeWithGroq(segments, groqApiKey, titleHint = "episode") {
+  if (!groqApiKey) throw new Error("Episode summary requires API key (header x-groq-api-key or GROQ_API_KEY)");
+  const chunks = chunkSegmentsForSummary(segments);
+  if (!chunks.length) throw new Error("No transcript chunks available");
+
+  const chunkSummaries = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const rows = chunks[i];
+    const transcript = rows.map((s) => String(s?.text || "").trim()).filter(Boolean).join(" ");
+    const start = Number(rows[0]?.start || 0);
+    const end = Number(rows[rows.length - 1]?.end || start);
+    const systemPrompt =
+      "Tu es un analyste éditorial de séries. Tu résumes un extrait de transcription sans inventer de faits. " +
+      "Réponds uniquement en JSON valide: {\"short\":\"...\",\"long\":\"...\",\"key_points\":[...],\"characters\":[...]}.";
+    const userPrompt =
+      `Titre: ${titleHint}\n` +
+      `Chunk ${i + 1}/${chunks.length} (${start.toFixed(1)}s -> ${end.toFixed(1)}s)\n` +
+      "Instructions:\n" +
+      "- Français naturel\n" +
+      "- Conserver les faits et enjeux narratifs\n" +
+      "- 3 à 6 points clés max\n\n" +
+      transcript;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+    try {
+      let res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: GROQ_SUMMARY_MODEL,
+          temperature: GROQ_SUMMARY_TEMPERATURE,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!res.ok && res.status === 400) {
+        res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${groqApiKey}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: GROQ_SUMMARY_MODEL,
+            temperature: GROQ_SUMMARY_TEMPERATURE,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        });
+      }
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(`Groq summary chunk HTTP ${res.status} ${msg}`.trim());
+      }
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseJsonLoose(content);
+      chunkSummaries.push(
+        normalizeEpisodeSummaryPayload(parsed, transcript.slice(0, 500))
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const reduceInput = chunkSummaries
+    .map(
+      (c, i) =>
+        `Chunk ${i + 1}\nshort: ${c.short}\nlong: ${c.long}\nkey_points: ${JSON.stringify(c.keyPoints)}\ncharacters: ${JSON.stringify(c.characters)}`
+    )
+    .join("\n\n");
+  const systemPrompt =
+    "Tu fusionnes des résumés de chunks en un résumé d'épisode. Ne pas inventer. " +
+    "Réponds uniquement en JSON: {\"short\":\"...\",\"long\":\"...\",\"key_points\":[...],\"characters\":[...]}.";
+  const userPrompt =
+    `Titre: ${titleHint}\n` +
+    "Produit:\n" +
+    "- short: 3 à 5 phrases max\n" +
+    "- long: 1 à 3 paragraphes\n" +
+    "- key_points: 5 à 10 points\n" +
+    "- characters: noms pertinents\n\n" +
+    reduceInput;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+  try {
+    let res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: GROQ_SUMMARY_MODEL,
+        temperature: GROQ_SUMMARY_TEMPERATURE,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!res.ok && res.status === 400) {
+      res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: GROQ_SUMMARY_MODEL,
+          temperature: GROQ_SUMMARY_TEMPERATURE,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+    }
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`Groq summary reduce HTTP ${res.status} ${msg}`.trim());
+    }
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content || "";
+    const parsed = parseJsonLoose(content);
+    const normalized = normalizeEpisodeSummaryPayload(parsed, chunkSummaries.map((c) => c.short).join(" "));
+    return { ...normalized, chunkCount: chunkSummaries.length };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function transcribeWithGroqAudio(filePath, groqApiKey) {
   if (!groqApiKey) throw new Error("Groq STT requires API key (header x-groq-api-key or GROQ_API_KEY)");
 
@@ -838,6 +1026,7 @@ app.get("/health", (_req, res) => {
     groqCleanupModel: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CLEANUP_MODEL : null,
     groqContextWindow: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CONTEXT_WINDOW : null,
     groqCleanupHintsConfigured: TEXT_CLEANUP_PROVIDER === "groq" ? parseGroqCleanupHints().length > 0 : null,
+    groqSummaryModel: GROQ_SUMMARY_MODEL,
   });
 });
 
@@ -912,6 +1101,58 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
         diarization: diarizationStrategy,
         language: WHISPER_LANGUAGE,
         textCleanup: textCleanupStrategy,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: String(err?.message || err) });
+  } finally {
+    await fs.unlink(uploadedPath).catch(() => {});
+  }
+});
+
+app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
+  const uploadedPath = req.file?.path;
+  if (!uploadedPath) {
+    return res.status(400).json({ error: "No file provided" });
+  }
+
+  try {
+    const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
+    let segments;
+    let sttStrategy = "whisper-cpp";
+    if (STT_ENGINE === "groq") {
+      try {
+        segments = await transcribeWithGroqAudio(uploadedPath, groqApiKey);
+        sttStrategy = `groq:${GROQ_STT_MODEL}`;
+      } catch {
+        segments = await transcribeWithWhisperCpp(uploadedPath);
+        sttStrategy = "whisper-cpp-fallback-after-groq-stt-failure";
+      }
+    } else {
+      segments = await transcribeWithWhisperCpp(uploadedPath);
+    }
+
+    if (!Array.isArray(segments) || !segments.length) {
+      return res.status(422).json({ error: "No transcription segments for summary" });
+    }
+
+    const titleHint = String(req.file?.originalname || "episode").replace(/\.[^/.]+$/, "");
+    const summary = await summarizeEpisodeWithGroq(segments, groqApiKey, titleHint);
+    const durationSec = Math.max(0, Number(segments[segments.length - 1]?.end || 0));
+
+    return res.json({
+      summary: {
+        short: summary.short,
+        long: summary.long,
+        keyPoints: summary.keyPoints,
+        characters: summary.characters,
+      },
+      meta: {
+        stt: sttStrategy,
+        summaryModel: GROQ_SUMMARY_MODEL,
+        segmentCount: segments.length,
+        durationSec,
+        chunkCount: summary.chunkCount,
       },
     });
   } catch (err) {
