@@ -164,6 +164,7 @@
     const local = isLocalModeEnabled();
     backendUrlRow.classList.toggle("hidden", !local);
     apiKeyInput.closest(".field")?.classList.toggle("hidden", local);
+    if (geminiKeyField) geminiKeyField.classList.toggle("hidden", !local);
   }
 
   function refreshRunButton() {

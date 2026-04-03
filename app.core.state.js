@@ -9,6 +9,8 @@
   const localMode = $("localMode");
   const backendUrlInput = $("backendUrlInput");
   const backendUrlRow = $("backendUrlRow");
+  const geminiKeyField = $("geminiKeyField");
+  const geminiApiKeyInput = $("geminiApiKeyInput");
   const dropzone = $("dropzone");
   const extractRow = $("extractRow");
   const extractAudio = $("extractAudio");
@@ -58,6 +60,9 @@
   const dzFileMeta2 = $("dzFileMeta2");
   const extractRow2 = $("extractRow2");
   const extractAudio2 = $("extractAudio2");
+  const summaryProviderSelect = $("summaryProviderSelect");
+  const geminiApiKeyInput2 = $("geminiApiKeyInput2");
+  const geminiKeyRow2 = $("geminiKeyRow2");
   const actionRow2 = $("actionRow2");
   const summaryUploadPanel = $("summary-upload-panel");
   const summaryProgressPanel = $("summary-progress-panel");
@@ -82,11 +87,14 @@
   const appPinError = $("appPinError");
 
   const API_KEY_STORAGE_KEY = "groq_api_key_transcription";
+  const GEMINI_KEY_STORAGE = "transcriptor_gemini_key";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
   const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
   const BACKEND_URL_STORAGE_KEY = "local_backend_url";
   const REVIEW_MODE_STORAGE_KEY = "review_mode_enabled";
   const EPISODE_SUMMARY_EXTRACT_PREF_KEY = "episode_summary_extract_audio_pref";
+  const EPISODE_SUMMARY_PROVIDER_KEY = "episode_summary_llm_provider";
+  const EPISODE_SUMMARY_GEMINI_KEY = "episode_summary_gemini_api_key";
   const APP_PIN_CODE_STORAGE_KEY = "app_pin_code";
   const APP_PIN_UNLOCKED_STORAGE_KEY = "app_pin_unlocked";
   const APP_PIN_FIXED_CODE = "2912";
@@ -328,7 +336,7 @@
     const upload = Math.min(200000, 2500 + mb * 4000);
     const server =
       mode === "local"
-        ? Math.max(35000, 20000 + mb * 15000)
+        ? Math.max(43000, 24000 + mb * 18500)
         : Math.max(25000, 12000 + mb * 3500);
     return Math.round(prep + upload + server);
   }
@@ -358,14 +366,22 @@
 
   function computePredictedEnd(remainCtx, now) {
     let end = remainCtx.predictedEnd;
-    if (remainCtx.phase === "upload" && remainCtx.uploadStart && remainCtx.lastLoaded > 2048) {
+    // Ne pas extrapoler l'upload une fois 100 % chargé : sinon uploadLeft=0 et
+    // end = now + serverAfterUploadMs*1.02 → temps restant constant (bug si un
+    // onprogress tardif remet phase "upload" après upload.onload).
+    if (
+      remainCtx.phase === "upload" &&
+      remainCtx.uploadStart &&
+      remainCtx.lastLoaded > 2048 &&
+      remainCtx.lastLoaded < remainCtx.bytes
+    ) {
       const dt = now - remainCtx.uploadStart;
       if (dt > 250) {
         const inst = remainCtx.lastLoaded / dt;
         remainCtx.smoothBps = remainCtx.smoothBps == null ? inst : remainCtx.smoothBps * 0.82 + inst * 0.18;
         const leftB = Math.max(0, remainCtx.bytes - remainCtx.lastLoaded);
         const uploadLeft = (leftB / remainCtx.smoothBps) * 1000;
-        end = Math.max(end, now + uploadLeft + remainCtx.serverAfterUploadMs * 0.92);
+        end = Math.max(end, now + uploadLeft + remainCtx.serverAfterUploadMs * 1.02);
       }
     }
     if (remainCtx.phase === "server" && remainCtx.serverStart) {
@@ -413,6 +429,7 @@
 
   function onUploadProgressBytes(loaded) {
     if (!remainCtx) return;
+    if (remainCtx.phase === "server") return;
     const now = Date.now();
     if (!remainCtx.uploadStart) remainCtx.uploadStart = now;
     remainCtx.phase = "upload";

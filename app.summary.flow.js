@@ -205,6 +205,30 @@
     });
   }
 
+  function syncSummaryProviderUi() {
+    const v = summaryProviderSelect?.value || "groq";
+    if (geminiKeyRow2) geminiKeyRow2.classList.toggle("hidden", v !== "gemini");
+  }
+
+  if (summaryProviderSelect) {
+    const saved = localStorage.getItem(EPISODE_SUMMARY_PROVIDER_KEY);
+    if (saved === "gemini" || saved === "groq") summaryProviderSelect.value = saved;
+    syncSummaryProviderUi();
+    summaryProviderSelect.addEventListener("change", () => {
+      localStorage.setItem(EPISODE_SUMMARY_PROVIDER_KEY, summaryProviderSelect.value);
+      syncSummaryProviderUi();
+    });
+  }
+  if (geminiApiKeyInput2) {
+    const gk = localStorage.getItem(EPISODE_SUMMARY_GEMINI_KEY);
+    if (gk) geminiApiKeyInput2.value = gk;
+    geminiApiKeyInput2.addEventListener("change", () => {
+      const t = geminiApiKeyInput2.value.trim();
+      if (t) localStorage.setItem(EPISODE_SUMMARY_GEMINI_KEY, t);
+      else localStorage.removeItem(EPISODE_SUMMARY_GEMINI_KEY);
+    });
+  }
+
   if (summaryCopyBtn2) summaryCopyBtn2.onclick = () => copyEpisodeSummaryToClipboard();
   if (summaryNewBtn2) {
     summaryNewBtn2.onclick = () => {
@@ -252,6 +276,13 @@
         const formData = new FormData();
         formData.append("file", fileToSend);
 
+        const provider = String(summaryProviderSelect?.value || "groq").trim().toLowerCase();
+        const extraHeaders = { "x-summary-provider": provider === "gemini" ? "gemini" : "groq" };
+        const gkEp =
+          String(geminiApiKeyInput2?.value || "").trim() ||
+          String(localStorage.getItem(GEMINI_KEY_STORAGE) || "").trim();
+        if (gkEp) extraHeaders["x-gemini-api-key"] = gkEp;
+
         const data = await postBackendTranscription(
           `${backendUrl.replace(/\/$/, "")}/api/episode-summary`,
           formData,
@@ -267,7 +298,7 @@
             setRemain2("Analyse du contenu…");
             startSummaryPulse2(60, 90);
           },
-          {}
+          extraHeaders
         );
 
         stopSummaryPulse2();
@@ -294,8 +325,9 @@
         const active = document.querySelector('.step[data-step2][data-status="active"]');
         if (active) setStep2(active.dataset.step2, "error");
         const retryLabel = extractRateLimitRetryLabel(err?.detail || "");
+        const apiLabel = String(summaryProviderSelect?.value || "groq") === "gemini" ? "API (Gemini)" : "Groq";
         const msg = retryLabel
-          ? `Quota Groq atteint. Réessaie dans ${retryLabel}.`
+          ? `Quota ${apiLabel} atteint. Réessaie dans ${retryLabel}.`
           : err?.message === "NETWORK_ERROR"
             ? "Connexion interrompue pendant le résumé."
             : "Erreur pendant la génération du résumé d'épisode.";

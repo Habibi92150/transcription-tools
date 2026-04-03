@@ -47,6 +47,8 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
+  const savedGeminiKey = localStorage.getItem(GEMINI_KEY_STORAGE);
+  if (geminiApiKeyInput && savedGeminiKey) geminiApiKeyInput.value = savedGeminiKey;
   const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
   if (localMode) localMode.checked = savedLocalMode === "1";
   const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
@@ -59,6 +61,13 @@
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value.trim());
     refreshRunButton();
   };
+  if (geminiApiKeyInput) {
+    geminiApiKeyInput.addEventListener("input", () => {
+      const t = geminiApiKeyInput.value.trim();
+      if (t) localStorage.setItem(GEMINI_KEY_STORAGE, t);
+      else localStorage.removeItem(GEMINI_KEY_STORAGE);
+    });
+  }
   if (localMode) {
     localMode.onchange = () => {
       localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
@@ -288,6 +297,10 @@
         formData.append("response_format", "verbose_json");
       }
 
+      const backendHeaders = { "x-groq-api-key": apiKey || "" };
+      const gk = geminiApiKeyInput?.value.trim();
+      if (gk) backendHeaders["x-gemini-api-key"] = gk;
+
       const data = localBackendMode
         ? await postBackendTranscription(
             `${backendUrl.replace(/\/$/, "")}/api/transcribe`,
@@ -304,7 +317,7 @@
               sr("Fichier envoyé. Backend local en cours.");
               tickRemain();
             },
-            { "x-groq-api-key": apiKey || "" }
+            backendHeaders
           )
         : await postTranscription(
             "https://api.groq.com/openai/v1/audio/transcriptions",
