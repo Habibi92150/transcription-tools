@@ -222,6 +222,14 @@
               <p class="option-hint">Seule la piste son est envoyée au lieu de la vidéo entière — recommandé pour les fichiers lourds.</p>
         </div>
 
+        <div id="reviewModeRow" class="option-row">
+          <label class="checkbox-label" for="reviewMode">
+            <input id="reviewMode" type="checkbox" checked />
+            <span>Activer la relecture interne avant export .srt</span>
+          </label>
+          <p class="option-hint">Permet de corriger les sous-titres dans l'app avec lecteur média avant téléchargement.</p>
+        </div>
+
         <input id="fileInput" class="hidden" type="file" accept="audio/*,video/*" aria-hidden="true" tabindex="-1" />
       </section>
 
@@ -290,6 +298,85 @@
         </div>
         <div class="export-actions">
           <button class="btn btn-ghost" id="newTranscriptionBtn" type="button">Nouvelle transcription</button>
+        </div>
+      </section>
+
+      <!-- ZONE C : Relecture / Correction -->
+      <section class="panel" id="review-panel" hidden aria-label="Relecture des sous-titres">
+        <div class="review-head">
+          <div>
+            <p class="review-title">Relecture interne</p>
+            <p class="review-sub" id="reviewMeta">Corrige les segments puis exporte le .srt final.</p>
+          </div>
+          <div class="review-stats" id="reviewStats">0 segments</div>
+        </div>
+
+        <div class="review-layout">
+          <div class="review-main">
+            <div class="review-player-wrap">
+              <div class="review-preview-toggles">
+                <label class="checkbox-label" for="reviewOverlayToggle">
+                  <input id="reviewOverlayToggle" type="checkbox" checked />
+                  <span>Aperçu overlay vidéo</span>
+                </label>
+                <label class="checkbox-label" for="reviewPanelToggle">
+                  <input id="reviewPanelToggle" type="checkbox" checked />
+                  <span>Aperçu texte live</span>
+                </label>
+              </div>
+              <div class="review-media-stage">
+                <video id="reviewPlayer" class="review-player hidden" controls preload="metadata"></video>
+                <div id="reviewOverlay" class="review-overlay hidden" aria-live="polite">
+                  <div id="reviewOverlaySpeaker" class="review-overlay-speaker"></div>
+                  <div id="reviewOverlayText" class="review-overlay-text"></div>
+                </div>
+              </div>
+              <audio id="reviewAudioPlayer" class="review-player hidden" controls preload="metadata"></audio>
+              <div id="reviewCaptionPanel" class="review-caption-panel hidden" aria-live="polite">
+                <div id="reviewCaptionSpeaker" class="review-caption-speaker"></div>
+                <div id="reviewCaptionText" class="review-caption-text"></div>
+              </div>
+            </div>
+
+            <div class="review-list-wrap">
+              <div class="review-list-head">
+                <span>Start</span>
+                <span>End</span>
+                <span>Speaker</span>
+                <span>Texte</span>
+                <span>Sync</span>
+              </div>
+              <div id="reviewList" class="review-list" aria-live="polite"></div>
+            </div>
+
+            <div class="review-actions">
+              <button class="btn btn-ghost" id="reviewCaptureBtn" type="button">Capturer frame</button>
+              <button class="btn btn-ghost" id="reviewResetBtn" type="button">Reset corrections</button>
+              <button class="btn btn-primary" id="reviewDownloadBtn" type="button">Télécharger .srt corrigé</button>
+            </div>
+          </div>
+
+          <aside class="review-side">
+            <div class="review-side-card">
+              <div class="review-side-head">
+                <p class="review-side-kicker">NOUVELLE FEATURE</p>
+                <h3 class="review-side-title">Génération wording</h3>
+                <p class="review-side-text">Génère 5 légendes courtes et percutantes (réseaux sociaux), à partir de toute la transcription, avec humeurs différentes.</p>
+              </div>
+              <div class="review-side-slot" id="reviewFutureSlot">
+                <div class="wording-tools">
+                  <button class="btn btn-primary wording-generate-btn" id="reviewWordingGenerateBtn" type="button">Générer 5 wordings</button>
+                  <p class="wording-source" id="reviewWordingSource">Contexte: toute la transcription</p>
+                  <p class="wording-status" id="reviewWordingStatus">En attente de génération.</p>
+                </div>
+                <div class="wording-list" id="reviewWordingList" aria-live="polite">
+                  <div class="wording-empty">
+                    Clique sur "Generer 5 wordings" pour creer des variantes (humour, emotion, tension, etc.).
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
       </section>
 
