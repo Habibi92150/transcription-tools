@@ -54,17 +54,36 @@ npm run start:backend
 
 ## Mode diarization "max quality" (pyannote)
 
+### Option A — Python natif (recommande pour dev local sous Windows)
+
 1) Creer un token Hugging Face (gratuit) avec acces au modele `pyannote/speaker-diarization-3.1`.
-2) Definir `HF_TOKEN` dans ton shell.
-3) Lancer le service:
+2) Dans `backend/.env`, definir:
+   - `HF_TOKEN=...`
+   - `DIARIZATION_PROVIDER=pyannote-service`
+   - `DIARIZER_URL=http://127.0.0.1:8790`
+3) Installer les deps Python:
+
+```bash
+npm run setup:diarizer-python
+```
+
+4) Lancer le diarizer Python:
+
+```bash
+npm run start:diarizer-python
+```
+
+5) Verifier:
+
+```bash
+curl http://127.0.0.1:8790/health
+```
+
+### Option B — Docker (si WSL/virtualisation fonctionne)
 
 ```bash
 docker compose -f docker-compose.diarizer.yml up --build
 ```
-
-4) Dans `backend/.env`:
-   - `DIARIZATION_PROVIDER=pyannote-service`
-   - `DIARIZER_URL=http://127.0.0.1:8790`
 
 Le backend Node fusionnera automatiquement les segments pyannote avec les segments Whisper.
 Si `TEXT_CLEANUP_PROVIDER=groq`, il applique ensuite une passe de correction orthographique FR sans modifier les timestamps/speakers.
