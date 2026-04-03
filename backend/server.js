@@ -380,6 +380,58 @@ function mergeTranscriptWithDiarization(segments, diarizationSegments) {
   });
 }
 
+function isRiffWaveBuffer(buf) {
+  return (
+    Buffer.isBuffer(buf) &&
+    buf.length >= 12 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WAVE"
+  );
+}
+
+async function bufferLooksLikeDecodableWav(buf) {
+  if (!isRiffWaveBuffer(buf)) return false;
+  try {
+    const decoded = await WavDecoder.decode(buf);
+    const samples = decoded?.channelData?.[0];
+    const sr = Number(decoded?.sampleRate || 0);
+    return Boolean(samples?.length && sr > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Diarisation locale (wav-decoder) et pyannote attendent du PCM WAV.
+ * Les uploads MP3/MP4/M4A échouaient silencieusement → fallback gaps seulement.
+ */
+async function ensureWavForDiarization(srcPath) {
+  const buf = await fs.readFile(srcPath);
+  if (await bufferLooksLikeDecodableWav(buf)) {
+    return { path: srcPath, cleanup: null };
+  }
+
+  const ffmpegRaw = String(process.env.FFMPEG_BIN || "ffmpeg").trim() || "ffmpeg";
+  const ffmpegBin = ffmpegRaw.includes(path.sep) ? resolveMaybeRelative(ffmpegRaw) : ffmpegRaw;
+  const outPath = path.join(TMP_DIR, `diar-${Date.now()}-${crypto.randomUUID()}.wav`);
+  await fs.mkdir(TMP_DIR, { recursive: true });
+  try {
+    await runCommand(ffmpegBin, ["-y", "-i", srcPath, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", outPath]);
+    return {
+      path: outPath,
+      cleanup: async () => {
+        await fs.unlink(outPath).catch(() => {});
+      },
+    };
+  } catch (err) {
+    console.warn(
+      "[diarization] ffmpeg conversion to WAV failed — install ffmpeg in PATH or set FFMPEG_BIN. Error:",
+      String(err?.message || err)
+    );
+    return { path: srcPath, cleanup: null };
+  }
+}
+
 function splitSegmentFrames(seg, frameSec, hopSec) {
   const out = [];
   const start = Math.max(0, Number(seg.start || 0));
@@ -496,8 +548,12 @@ async function applyVoiceAwareDiarization(filePath, segments) {
 
 async function diarizeWithExternalService(filePath) {
   const fileBuffer = await fs.readFile(filePath);
+  const base = path.basename(filePath) || "audio.wav";
+  const ext = (path.extname(base) || ".wav").toLowerCase();
+  const mime = ext === ".wav" ? "audio/wav" : "application/octet-stream";
+  const uploadName = ext === ".wav" ? "audio.wav" : base;
   const form = new FormData();
-  form.append("file", new Blob([fileBuffer], { type: "audio/wav" }), "audio.wav");
+  form.append("file", new Blob([fileBuffer], { type: mime }), uploadName);
   form.append("max_speakers", String(DIARIZATION_MAX_SPEAKERS));
 
   const headers = {};
@@ -808,22 +864,28 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
       segments = await transcribeWithWhisperCpp(uploadedPath);
     }
 
+    const wavForDiar = await ensureWavForDiarization(uploadedPath);
     let diarizedSegments = null;
     let diarizationStrategy = "none";
-    if (DIARIZATION_PROVIDER === "pyannote-service") {
-      try {
-        const diarizationSegments = await diarizeWithExternalService(uploadedPath);
-        diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
-        diarizationStrategy = "pyannote-service";
-      } catch (err) {
-        const fallback = await applyVoiceAwareDiarization(uploadedPath, segments);
-        diarizedSegments = fallback.segments;
-        diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
+    try {
+      if (DIARIZATION_PROVIDER === "pyannote-service") {
+        try {
+          const diarizationSegments = await diarizeWithExternalService(wavForDiar.path);
+          diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
+          diarizationStrategy = "pyannote-service";
+        } catch (err) {
+          console.warn("[diarization] pyannote-service:", String(err?.message || err));
+          const fallback = await applyVoiceAwareDiarization(wavForDiar.path, segments);
+          diarizedSegments = fallback.segments;
+          diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
+        }
+      } else {
+        const local = await applyVoiceAwareDiarization(wavForDiar.path, segments);
+        diarizedSegments = local.segments;
+        diarizationStrategy = local.strategy;
       }
-    } else {
-      const local = await applyVoiceAwareDiarization(uploadedPath, segments);
-      diarizedSegments = local.segments;
-      diarizationStrategy = local.strategy;
+    } finally {
+      if (wavForDiar.cleanup) await wavForDiar.cleanup();
     }
 
     let finalSegments = diarizedSegments;
