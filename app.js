@@ -74,6 +74,64 @@
     language: "FR",
     maxChars: WORDING_MAX_CHARS,
   });
+  /** Q1 2026 hook / algo guidance injected into wording generation (TrendPack). */
+  const WORDING_TREND_PACK = Object.freeze({
+    trendpack_date: "Q1 2026",
+    sources: ["Instagram algorithm data", "TikTok creator insights", "X engagement reports"],
+    top_hook_patterns: [
+      {
+        format: "Fragment universel",
+        structure: "[Situation relatable sans explication]",
+        example: "Faire les courses en étant affamé",
+        why: "Pas besoin de contexte — l'audience complète mentalement, arrêt du scroll garanti",
+      },
+      {
+        format: "POV",
+        structure: "POV : [situation immédiatement reconnaissable]",
+        example: "POV : les parents à 10h du mat' le dimanche",
+        why: "Format natif TikTok / Reels, crée identification instantanée",
+      },
+      {
+        format: "Question rhétorique courte",
+        structure: "[Question qui crée un doute ou un débat] ?",
+        example: "Vous pensez qu'il l'a vraiment inventé sur le moment ?",
+        why: "Déclenche les commentaires, signal fort pour l'algorithme en 2026",
+      },
+      {
+        format: "Contrarian / ironie",
+        structure: "[Affirmation qui va à l'encontre de l'évidence]",
+        example: "Point faible : être trop fort",
+        why: "Crée friction cognitive, force la relecture",
+      },
+      {
+        format: "Two words max",
+        structure: "[Adjectif ou nom] + [intensificateur ou rien]",
+        example: "Trahison max",
+        why: "Micro-format dominant sur X et Stories — dit tout sans rien expliquer",
+      },
+    ],
+    algorithm_signals_2026: {
+      priority_metrics: ["saves", "shares", "comment replies"],
+      hook_window: "first 1.7 seconds / first 125 characters",
+      optimal_reel_length: "30-90 seconds",
+      hashtags: "3-5 max, keyword-first strategy over hashtag volume",
+      caption_seo:
+        "Keywords in first 2 sentences — Instagram AI reads captions for ranking",
+    },
+    what_is_dying: [
+      "Generic action verbs in hooks (Découvrez, Ne manquez pas, Game-changer)",
+      "30+ hashtags",
+      "Production quality as differentiator",
+      "Chasing virality over community",
+    ],
+    what_is_winning: [
+      "Unpolished authenticity + strong structure",
+      "Recurring formats / signature series",
+      "Micro clips as entry points to longer content",
+      "Community identity hooks (inside jokes, shared references)",
+      "Saves-driven CTAs (Save this, Revenez-y)",
+    ],
+  });
   const WORDING_MOOD_COLORS = {
     Humour: "255,184,92",
     Emotion: "255,118,156",
@@ -84,7 +142,6 @@
 
   let selectedFile = null;
   let ffmpegBundlePromise = null;
-  let fakeRaf = null;
   let reviewState = null;
   let reviewMediaUrl = null;
   let reviewActiveIndex = -1;
@@ -160,11 +217,8 @@
     if (progressRemain) progressRemain.textContent = "";
   }
 
-  function tickRemain() {
-    if (!remainCtx || !progressRemain) return;
-    const now = Date.now();
+  function computePredictedEnd(remainCtx, now) {
     let end = remainCtx.predictedEnd;
-
     if (remainCtx.phase === "upload" && remainCtx.uploadStart && remainCtx.lastLoaded > 2048) {
       const dt = now - remainCtx.uploadStart;
       if (dt > 250) {
@@ -175,21 +229,47 @@
         end = Math.max(end, now + uploadLeft + remainCtx.serverAfterUploadMs * 0.92);
       }
     }
-
     if (remainCtx.phase === "server" && remainCtx.serverStart) {
       const spent = now - remainCtx.serverStart;
       const left = Math.max(0, remainCtx.serverBudgetMs - spent);
       end = Math.max(end, now + left + remainCtx.finalizeSlackMs);
     }
+    return end;
+  }
 
+  function tickRemain() {
+    if (!remainCtx || !progressRemain) return;
+    const now = Date.now();
+    const end = computePredictedEnd(remainCtx, now);
     progressRemain.textContent = formatRemainMs(end - now);
+    syncProgressFromRemainCtx(now, end);
+  }
+
+  /** Barre alignée sur le même modèle que le temps restant (upload réel + ETA serveur). */
+  function syncProgressFromRemainCtx(now = Date.now(), predictedEnd) {
+    if (!remainCtx) return;
+    if (remainCtx.phase === "upload" && remainCtx.bytes > 0) {
+      const u = Math.min(1, remainCtx.lastLoaded / remainCtx.bytes);
+      setProgress(15 + 45 * u);
+      return;
+    }
+    if (remainCtx.phase === "server" && remainCtx.serverStart) {
+      const end = predictedEnd != null ? predictedEnd : computePredictedEnd(remainCtx, now);
+      const span = Math.max(4000, end - remainCtx.serverStart);
+      const raw = (now - remainCtx.serverStart) / span;
+      if (raw <= 1) {
+        setProgress(60 + 33 * raw);
+      } else {
+        setProgress(Math.min(93, 90 + Math.min(3, (raw - 1) * 5)));
+      }
+    }
   }
 
   function startRemainTimer(ctx) {
     stopRemainTimer();
     remainCtx = ctx;
     tickRemain();
-    remainTimerId = setInterval(tickRemain, 280);
+    remainTimerId = setInterval(tickRemain, 180);
   }
 
   function onUploadProgressBytes(loaded) {
@@ -198,6 +278,7 @@
     if (!remainCtx.uploadStart) remainCtx.uploadStart = now;
     remainCtx.phase = "upload";
     remainCtx.lastLoaded = loaded;
+    syncProgressFromRemainCtx(now, computePredictedEnd(remainCtx, now));
   }
 
   function onUploadComplete() {
@@ -244,27 +325,6 @@
     progressBar.setAttribute("aria-valuenow", String(Math.round(p)));
   }
 
-  function stopFakeProgress() {
-    if (fakeRaf) {
-      cancelAnimationFrame(fakeRaf);
-      fakeRaf = null;
-    }
-  }
-
-  function startFakeProgress(from, to, ms) {
-    stopFakeProgress();
-    const start = Date.now();
-    const tick = () => {
-      const elapsed = Date.now() - start;
-      const eased = 1 - Math.exp(-3 * Math.min(1, elapsed / ms));
-      setProgress(from + (to - from) * eased);
-      const rem = Math.max(0, ms - elapsed);
-      setEta(rem > 0 ? ETA_TRANSCRIBE : ETA_FINALIZE);
-      fakeRaf = requestAnimationFrame(tick);
-    };
-    fakeRaf = requestAnimationFrame(tick);
-  }
-
   function setStep(name, status) {
     const el = document.querySelector(`.step[data-step="${name}"]`);
     if (!el) return;
@@ -279,7 +339,6 @@
   }
 
   function resetUI() {
-    stopFakeProgress();
     progressPanel.hidden = true;
     exportPanel.hidden = true;
     reviewPanel.hidden = true;
@@ -815,10 +874,20 @@
 
   function toSrtWithSpeakers(segments, opts = {}) {
     const cues = refineCueTimeline(segments.flatMap(splitSegmentBalanced));
+    const labelEveryCue = Boolean(opts?.labelEveryCue);
+    const showSpeakerLabel = opts?.showSpeakerLabel !== false;
+    let prevSpeaker = null;
     return cues
       .map((seg, i) => {
+        const speaker = normalizeSpeaker(seg?.speaker);
         const line = String(seg.text || "").replace(/^\s*[-–—]\s+/, "");
-        return `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${line}\n`;
+        const isNewSpeaker = Boolean(speaker) && speaker !== prevSpeaker;
+        const shouldPrefixDash = labelEveryCue ? Boolean(speaker) : isNewSpeaker;
+        if (speaker) prevSpeaker = speaker;
+        const speakerLabel = showSpeakerLabel && speaker && (labelEveryCue || isNewSpeaker) ? `${speaker}: ` : "";
+        const outText = `${speakerLabel}${line}`;
+        const outLine = shouldPrefixDash ? `- ${outText}` : outText;
+        return `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${outLine}\n`;
       })
       .join("\n");
   }
@@ -1101,7 +1170,7 @@
       `MaxChars: ${WORDING_BRIEF_DEFAULTS.maxChars}`,
       `Number: ${WORDING_MOODS.length}`,
     ].join("\n");
-    const trendPack = [];
+    const trendPack = WORDING_TREND_PACK;
 
     const systemPrompt = [
       "You are a senior social media copywriter for entertainment, streaming, and culture brands.",
@@ -1111,7 +1180,8 @@
       "Forbidden phrases: \"Decouvrez\", \"Don't miss out\", \"Game-changer\".",
       "caption_full must be <= MaxChars unless brief says otherwise.",
       "Use at least one emoji per option when relevant.",
-      "If TrendPack is empty, set trend_status to no_relevant_live_trend_found and do not invent sources.",
+      "TrendPack is authoritative Q1 2026 guidance: align hooks with top_hook_patterns, respect algorithm_signals_2026 (hook window, saves/shares/replies, caption SEO), favor what_is_winning, avoid what_is_dying.",
+      "Set trend_status to trend_used when you meaningfully apply TrendPack; use no_relevant_live_trend_found only if the transcript truly cannot map without forcing. Do not invent extra sources beyond TrendPack.sources labels.",
       "Return ONLY valid JSON with this structure:",
       "{\"trend_status\":\"trend_used|no_relevant_live_trend_found\",\"options\":[{\"angle\":\"...\",\"hook\":\"...\",\"body\":\"...\",\"cta\":\"...\",\"caption_full\":\"...\",\"char_count\":0,\"pattern_note\":\"...\"}],\"wordings\":[{\"mood\":\"Humour\",\"text\":\"...\"},{\"mood\":\"Emotion\",\"text\":\"...\"},{\"mood\":\"Tension\",\"text\":\"...\"},{\"mood\":\"Inspiration\",\"text\":\"...\"},{\"mood\":\"Impact\",\"text\":\"...\"}]}",
       "The wordings array is mandatory and must contain exactly 5 items.",
@@ -1218,7 +1288,7 @@
 
   function buildSrtFromSegments(segments) {
     const hasSpeakerData = (Array.isArray(segments) ? segments : []).some((seg) => !!normalizeSpeaker(seg?.speaker));
-    return hasSpeakerData ? toSrtWithSpeakers(segments, { labelEveryCue: true }) : toSrt(segments);
+    return hasSpeakerData ? toSrtWithSpeakers(segments, { labelEveryCue: false, showSpeakerLabel: true }) : toSrt(segments);
   }
 
   function setReviewActiveIndex(index) {
@@ -1596,7 +1666,6 @@
             formData,
             (p) => {
               onUploadProgressBytes(p * fileToSend.size);
-              setProgress(15 + p * 45);
               setEta(ETA_TRANSCRIBE);
             },
             () => {
@@ -1605,7 +1674,7 @@
               setProgress(60);
               setStep("transcribe", "active");
               sr("Fichier envoyé. Backend local en cours.");
-              startFakeProgress(60, 90, estimatedApiMs);
+              tickRemain();
             },
             { "x-groq-api-key": apiKey || "" }
           )
@@ -1615,7 +1684,6 @@
             formData,
             (p) => {
               onUploadProgressBytes(p * fileToSend.size);
-              setProgress(15 + p * 45);
               setEta(ETA_TRANSCRIBE);
             },
             () => {
@@ -1624,12 +1692,11 @@
               setProgress(60);
               setStep("transcribe", "active");
               sr("Fichier envoyé. Transcription IA en cours.");
-              startFakeProgress(60, 90, estimatedApiMs);
+              tickRemain();
             }
           );
 
       // STEP 3 — Transcription done
-      stopFakeProgress();
       setStep("transcribe", "done");
       setProgress(93);
       setEta(ETA_FINALIZE);
@@ -1665,7 +1732,6 @@
         }
       }, 900);
     } catch (err) {
-      stopFakeProgress();
       stopRemainTimer();
       const activeStep = document.querySelector(".step[data-status='active']");
       if (activeStep) setStep(activeStep.dataset.step, "error");

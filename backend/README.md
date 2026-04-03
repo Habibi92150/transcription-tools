@@ -8,10 +8,12 @@ Le repo peut utiliser des binaires `whisper.cpp` precompiles pour le mode local 
 - Node.js 18+
 - Un binaire `whisper-cli` (par defaut: `backend/bin/whispercpp/Release/whisper-cli.exe`)
 - Un modele whisper.cpp local (par defaut: `backend/models/ggml-base.bin`)
+- **ffmpeg** dans le `PATH` (ou `FFMPEG_BIN` dans `.env`) — requis pour convertir MP3/MP4 en WAV avant la diarisation (local ou pyannote). Sans ffmpeg, seuls les fichiers deja en WAV PCM sont diarisés correctement.
 
 ## Variables d'environnement
 
 - `PORT` (defaut `8787`)
+- `FFMPEG_BIN` (defaut `ffmpeg`) — conversion audio → WAV 16 kHz mono pour la diarisation
 - `STT_ENGINE` (`whisper-cpp` ou `groq`) — avec `groq`, meme endpoint que le deploiement `main` (`/audio/transcriptions`, `whisper-large-v3-turbo`, `verbose_json`). Cle: `GROQ_API_KEY` ou header `x-groq-api-key`. Repli automatique sur whisper.cpp si Groq echoue.
 - `GROQ_STT_MODEL` (defaut `whisper-large-v3-turbo`)
 - `GROQ_STT_TEMPERATURE` (defaut `0`)
@@ -73,11 +75,13 @@ npm run setup:diarizer-python
 npm run start:diarizer-python
 ```
 
-5) Verifier:
+5) Verifier (`hfTokenConfigured` doit etre `true` avant `/diarize`) :
 
 ```bash
 curl http://127.0.0.1:8790/health
 ```
+
+Le service demarre meme sans `HF_TOKEN` ; `/health` indique si le token est configure. Sans token, `POST /diarize` repond 503 avec un message explicite.
 
 ### Option B — Docker (si WSL/virtualisation fonctionne)
 

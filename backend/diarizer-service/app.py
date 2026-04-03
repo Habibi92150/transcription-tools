@@ -55,11 +55,22 @@ MODEL_NAME = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-3.1")
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
 DIARIZER_API_KEY = os.getenv("DIARIZER_API_KEY", "").strip()
 
-if not HF_TOKEN:
-    raise RuntimeError("HF_TOKEN is required for pyannote model access")
+_pipeline = None
 
-pipeline = Pipeline.from_pretrained(MODEL_NAME, use_auth_token=HF_TOKEN)
 app = FastAPI(title=APP_TITLE)
+
+
+def get_pipeline() -> Pipeline:
+    global _pipeline
+    if _pipeline is not None:
+        return _pipeline
+    if not HF_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="HF_TOKEN manquant : ajoute un token Hugging Face avec accès au modèle pyannote (voir README).",
+        )
+    _pipeline = Pipeline.from_pretrained(MODEL_NAME, use_auth_token=HF_TOKEN)
+    return _pipeline
 
 
 def _normalize_auth(authorization: str | None) -> str:
@@ -73,7 +84,12 @@ def _normalize_auth(authorization: str | None) -> str:
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"ok": True, "model": MODEL_NAME}
+    return {
+        "ok": True,
+        "model": MODEL_NAME,
+        "hfTokenConfigured": bool(HF_TOKEN),
+        "pipelineLoaded": _pipeline is not None,
+    }
 
 
 @app.post("/diarize")
@@ -94,7 +110,10 @@ async def diarize(
         tmp.write(content)
 
     try:
-        diarization = pipeline(temp_path, num_speakers=max(1, int(max_speakers)))
+        pl = get_pipeline()
+        max_sp = max(1, int(max_speakers))
+        # min/max évite d'imposer un nombre exact de locuteurs (plus stable que num_speakers=2)
+        diarization = pl(temp_path, min_speakers=1, max_speakers=max_sp)
         segments: List[Dict[str, Any]] = []
         for turn, _, speaker in diarization.itertracks(yield_label=True):
             segments.append(

@@ -189,18 +189,23 @@
           <input id="apiKeyInput" class="field-input" type="password" autocomplete="off" placeholder="Entrer l'accès équipe…" />
         </div>
 
-        <div id="localModeRow" class="option-row">
-          <label class="checkbox-label" for="localMode">
-            <input id="localMode" type="checkbox" />
-            <span>Mode backend local/hébergé (sans clé API externe)</span>
-          </label>
-          <p class="option-hint">Quand activé, l'app envoie l'audio extrait au backend Node (`/api/transcribe`).</p>
-        </div>
+        <details class="settings-disclosure">
+          <summary class="settings-disclosure-summary"><span class="settings-disclosure-icon" aria-hidden="true">⚙️</span> Paramètres</summary>
+          <div class="settings-disclosure-body">
+            <div id="localModeRow" class="option-row">
+              <label class="checkbox-label" for="localMode">
+                <input id="localMode" type="checkbox" />
+                <span>Mode backend local/hébergé (sans clé API externe)</span>
+              </label>
+              <p class="option-hint">Quand activé, l'app envoie l'audio extrait au backend Node (`/api/transcribe`).</p>
+            </div>
 
-        <div id="backendUrlRow" class="field hidden">
-          <label class="field-label" for="backendUrlInput">URL backend</label>
-          <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
-        </div>
+            <div id="backendUrlRow" class="field hidden">
+              <label class="field-label" for="backendUrlInput">URL backend</label>
+              <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
+            </div>
+          </div>
+        </details>
 
         <div class="action-row" id="actionRow">
           <button id="pickBtn" class="btn btn-ghost" type="button">
@@ -225,9 +230,9 @@
         <div id="reviewModeRow" class="option-row">
           <label class="checkbox-label" for="reviewMode">
             <input id="reviewMode" type="checkbox" checked />
-            <span>Activer la relecture interne avant export .srt</span>
+            <span>Vérifier les sous-titres avant téléchargement</span>
           </label>
-          <p class="option-hint">Permet de corriger les sous-titres dans l'app avec lecteur média avant téléchargement.</p>
+          <p class="option-hint">Après la transcription, ouvre l'éditeur avec lecteur pour ajuster texte et timings, puis télécharge le .srt.</p>
         </div>
 
         <input id="fileInput" class="hidden" type="file" accept="audio/*,video/*" aria-hidden="true" tabindex="-1" />
@@ -273,7 +278,7 @@
 
           <div class="progress-wrap">
             <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
-              <div class="progress-fill" id="progressFill"></div>
+              <div class="progress-fill" id="progressFill"><span class="progress-fill-highlight" aria-hidden="true"></span></div>
             </div>
             <div class="progress-meta">
               <span class="progress-eta" id="progressEta" aria-live="polite">Transcription en cours...</span>
