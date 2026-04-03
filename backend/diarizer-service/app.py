@@ -3,8 +3,15 @@ import tempfile
 import sys
 import types
 from typing import List, Dict, Any
+from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Header
+from dotenv import load_dotenv
+
+SERVICE_DIR = Path(__file__).resolve().parent
+# Load diarizer-local env first, then backend env as fallback.
+load_dotenv(SERVICE_DIR / ".env", override=False)
+load_dotenv(SERVICE_DIR.parent / ".env", override=False)
 
 # Backward-compat shim for pyannote calling hf_hub_download(use_auth_token=...)
 import huggingface_hub as _hf
