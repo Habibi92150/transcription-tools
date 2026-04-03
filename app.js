@@ -28,21 +28,67 @@
   const newTranscriptionBtn = $("newTranscriptionBtn");
   const exportMeta = $("exportMeta");
   const srStatus = $("sr-status");
+  const reviewMode = $("reviewMode");
+  const reviewPanel = $("review-panel");
+  const reviewPlayer = $("reviewPlayer");
+  const reviewAudioPlayer = $("reviewAudioPlayer");
+  const reviewOverlay = $("reviewOverlay");
+  const reviewOverlaySpeaker = $("reviewOverlaySpeaker");
+  const reviewOverlayText = $("reviewOverlayText");
+  const reviewCaptionPanel = $("reviewCaptionPanel");
+  const reviewCaptionSpeaker = $("reviewCaptionSpeaker");
+  const reviewCaptionText = $("reviewCaptionText");
+  const reviewOverlayToggle = $("reviewOverlayToggle");
+  const reviewPanelToggle = $("reviewPanelToggle");
+  const reviewList = $("reviewList");
+  const reviewMeta = $("reviewMeta");
+  const reviewStats = $("reviewStats");
+  const reviewDownloadBtn = $("reviewDownloadBtn");
+  const reviewResetBtn = $("reviewResetBtn");
+  const reviewCaptureBtn = $("reviewCaptureBtn");
+  const reviewWordingGenerateBtn = $("reviewWordingGenerateBtn");
+  const reviewWordingSource = $("reviewWordingSource");
+  const reviewWordingStatus = $("reviewWordingStatus");
+  const reviewWordingList = $("reviewWordingList");
 
   const API_KEY_STORAGE_KEY = "groq_api_key_transcription";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
   const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
   const BACKEND_URL_STORAGE_KEY = "local_backend_url";
+  const REVIEW_MODE_STORAGE_KEY = "review_mode_enabled";
   const DEFAULT_BACKEND_URL = "http://localhost:8787";
   const JOB_STATS_KEY = "transcriptor_job_stats_v1";
   const JOB_STATS_MAX = 18;
 
   const ETA_TRANSCRIBE = "Transcription en cours...";
   const ETA_FINALIZE = "Finalisation du .srt...";
+  const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
+  const WORDING_MODEL = "llama-3.3-70b-versatile";
+  const WORDING_MOODS = ["Humour", "Emotion", "Tension", "Inspiration", "Impact"];
+  const WORDING_MAX_CHARS = 150;
+  const WORDING_BRIEF_DEFAULTS = Object.freeze({
+    platform: "INSTAGRAM",
+    tone: "engageant, social-first, premium accessible",
+    audience: "18-35 digital natives, French market",
+    objective: "ENGAGEMENT",
+    language: "FR",
+    maxChars: WORDING_MAX_CHARS,
+  });
+  const WORDING_MOOD_COLORS = {
+    Humour: "255,184,92",
+    Emotion: "255,118,156",
+    Tension: "255,102,102",
+    Inspiration: "113,190,255",
+    Impact: "146,132,255",
+  };
 
   let selectedFile = null;
   let ffmpegBundlePromise = null;
   let fakeRaf = null;
+  let reviewState = null;
+  let reviewMediaUrl = null;
+  let reviewActiveIndex = -1;
+  let wordingState = { loading: false, items: [], source: "" };
 
   function loadJobStats() {
     try {
@@ -236,6 +282,7 @@
     stopFakeProgress();
     progressPanel.hidden = true;
     exportPanel.hidden = true;
+    reviewPanel.hidden = true;
     uploadPanel.hidden = false;
     actionRow.hidden = false;
     pickBtn.disabled = false;
@@ -244,7 +291,51 @@
     setProgress(0);
     setEta(ETA_TRANSCRIBE);
     stopRemainTimer();
+    cleanupReviewMedia();
     refreshRunButton();
+  }
+
+  function cloneSegmentsForReview(segments) {
+    return (Array.isArray(segments) ? segments : []).map((seg) => ({
+      start: Number(seg?.start) || 0,
+      end: Math.max(Number(seg?.start) || 0, Number(seg?.end) || Number(seg?.start) || 0),
+      text: String(seg?.text || "").trim(),
+      speaker: seg?.speaker == null ? "" : String(seg.speaker),
+    }));
+  }
+
+  function getReviewMediaElement() {
+    if (!reviewPlayer.classList.contains("hidden")) return reviewPlayer;
+    if (!reviewAudioPlayer.classList.contains("hidden")) return reviewAudioPlayer;
+    return null;
+  }
+
+  function cleanupReviewMedia() {
+    reviewState = null;
+    reviewActiveIndex = -1;
+    reviewList.innerHTML = "";
+    reviewMeta.textContent = "";
+    reviewStats.textContent = "0 segments";
+    reviewOverlay.classList.add("hidden");
+    reviewOverlaySpeaker.textContent = "";
+    reviewOverlayText.textContent = "";
+    reviewOverlayText.style.border = "none";
+    reviewCaptionPanel.classList.add("hidden");
+    reviewCaptionSpeaker.textContent = "";
+    reviewCaptionText.textContent = "";
+    reviewCaptionPanel.style.borderColor = "";
+    [reviewPlayer, reviewAudioPlayer].forEach((el) => {
+      try {
+        el.pause();
+      } catch {}
+      el.removeAttribute("src");
+      el.load?.();
+      el.classList.add("hidden");
+    });
+    if (reviewMediaUrl) {
+      URL.revokeObjectURL(reviewMediaUrl);
+      reviewMediaUrl = null;
+    }
   }
 
   // ========= File helpers =========
@@ -723,15 +814,10 @@
   };
 
   function toSrtWithSpeakers(segments, opts = {}) {
-    const { labelEveryCue = false } = opts;
     const cues = refineCueTimeline(segments.flatMap(splitSegmentBalanced));
-    let lastSpeaker = null;
     return cues
       .map((seg, i) => {
-        const speaker = normalizeSpeaker(seg.speaker);
-        const shouldLabel = !!speaker && (labelEveryCue || speaker !== lastSpeaker);
-        const line = shouldLabel ? `- ${seg.text}` : seg.text;
-        lastSpeaker = speaker || lastSpeaker;
+        const line = String(seg.text || "").replace(/^\s*[-–—]\s+/, "");
         return `${i + 1}\n${ts(seg.start)} --> ${ts(seg.end)}\n${line}\n`;
       })
       .join("\n");
@@ -746,6 +832,473 @@
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  function formatReviewTime(sec) {
+    const s = Math.max(0, Number(sec) || 0);
+    const m = Math.floor(s / 60);
+    const r = (s - m * 60).toFixed(2).padStart(5, "0");
+    return `${String(m).padStart(2, "0")}:${r}`;
+  }
+
+  const SPEAKER_PALETTE = [
+    "56,170,255",
+    "75,208,130",
+    "255,186,64",
+    "255,120,120",
+    "180,132,255",
+    "76,212,220",
+    "255,145,82",
+    "131,197,101",
+  ];
+
+  function speakerColorRgb(speaker) {
+    const normalized = normalizeSpeaker(speaker) || "SPEAKER_00";
+    const match = normalized.match(/\d+/);
+    if (match) return SPEAKER_PALETTE[Number(match[0]) % SPEAKER_PALETTE.length];
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i++) hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+    return SPEAKER_PALETTE[hash % SPEAKER_PALETTE.length];
+  }
+
+  function previewLineFromSegment(seg) {
+    if (!seg) return { speaker: "", text: "" };
+    const speaker = normalizeSpeaker(seg.speaker) || "";
+    const text = String(seg.text || "").trim();
+    return { speaker, text };
+  }
+
+  function updateSubtitlePreview(activeIndex) {
+    const showPanel = !!reviewPanelToggle?.checked;
+    const showOverlay = !!reviewOverlayToggle?.checked && !reviewPlayer.classList.contains("hidden");
+    const seg =
+      reviewState && Array.isArray(reviewState.editedSegments) && activeIndex >= 0
+        ? reviewState.editedSegments[activeIndex]
+        : null;
+    const { speaker, text } = previewLineFromSegment(seg);
+    const rgb = speakerColorRgb(speaker);
+
+    if (showOverlay && text) {
+      reviewOverlay.classList.remove("hidden");
+      reviewOverlaySpeaker.textContent = speaker || " ";
+      reviewOverlaySpeaker.style.display = speaker ? "" : "none";
+      reviewOverlayText.textContent = text;
+      reviewOverlayText.style.border = `1px solid rgba(${rgb},0.72)`;
+    } else {
+      reviewOverlay.classList.add("hidden");
+      reviewOverlaySpeaker.textContent = "";
+      reviewOverlayText.textContent = "";
+      reviewOverlayText.style.border = "none";
+    }
+
+    if (showPanel && text) {
+      reviewCaptionPanel.classList.remove("hidden");
+      reviewCaptionSpeaker.textContent = speaker || "";
+      reviewCaptionText.textContent = text;
+      reviewCaptionPanel.style.borderColor = `rgba(${rgb},0.72)`;
+    } else {
+      reviewCaptionPanel.classList.add("hidden");
+      reviewCaptionSpeaker.textContent = "";
+      reviewCaptionText.textContent = "";
+      reviewCaptionPanel.style.borderColor = "";
+    }
+  }
+
+  function findActiveSegmentIndexAtTime(timeSec) {
+    if (!reviewState?.editedSegments?.length) return -1;
+    const t = Number(timeSec || 0);
+    for (let i = 0; i < reviewState.editedSegments.length; i++) {
+      const seg = reviewState.editedSegments[i];
+      if (t >= seg.start && t <= seg.end + 0.05) return i;
+    }
+    return -1;
+  }
+
+  function wrapTextLines(ctx, text, maxWidth) {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const lines = [];
+    let line = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const test = `${line} ${words[i]}`;
+      if (ctx.measureText(test).width <= maxWidth) line = test;
+      else {
+        lines.push(line);
+        line = words[i];
+      }
+    }
+    lines.push(line);
+    return lines.slice(0, 3);
+  }
+
+  function drawRoundedRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function parseJsonLoose(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {}
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) {
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch {}
+    }
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1));
+      } catch {}
+    }
+    return null;
+  }
+
+  function resetWordingState() {
+    wordingState = { loading: false, items: [], source: "" };
+    if (reviewWordingSource) reviewWordingSource.textContent = "Contexte: toute la transcription";
+    if (reviewWordingStatus) reviewWordingStatus.textContent = "En attente de génération.";
+    if (reviewWordingList) {
+      reviewWordingList.innerHTML = '<div class="wording-empty">Clique sur "Generer 5 wordings" pour creer des variantes (humour, emotion, tension, etc.).</div>';
+    }
+  }
+
+  function buildWordingExcerpt() {
+    if (!reviewState?.editedSegments?.length) return null;
+    const segs = reviewState.editedSegments;
+    const text = segs
+      .map((seg) => String(seg?.text || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return null;
+    const first = segs[0] || {};
+    const last = segs[segs.length - 1] || {};
+    const source = `Transcription complete: ${segs.length} segments (${formatReviewTime(first.start)} -> ${formatReviewTime(last.end)})`;
+    return { text, source };
+  }
+
+  function renderWordingResults() {
+    if (!reviewWordingList || !reviewWordingStatus) return;
+    if (wordingState.loading) {
+      reviewWordingStatus.textContent = "Generation en cours...";
+      reviewWordingList.innerHTML = '<div class="wording-empty">Generation des 5 propositions en cours...</div>';
+      return;
+    }
+    if (!wordingState.items.length) {
+      reviewWordingStatus.textContent = "Aucun wording genere.";
+      reviewWordingList.innerHTML = '<div class="wording-empty">Aucun resultat pour le moment.</div>';
+      return;
+    }
+    reviewWordingStatus.textContent = "5 variantes generees.";
+    reviewWordingList.innerHTML = wordingState.items
+      .map((item, i) => {
+        const mood = String(item?.mood || "").trim() || `Humeur ${i + 1}`;
+        const text = String(item?.text || "").trim();
+        const color = WORDING_MOOD_COLORS[mood] || "142,150,175";
+        return `
+          <article class="wording-card" style="--mood-rgb:${color}">
+            <div class="wording-card-head">
+              <span class="wording-mood">${escapeHtml(mood)}</span>
+              <button type="button" class="wording-copy-btn" data-copy-wording="${i}" title="Copier le wording">Copier</button>
+            </div>
+            <p class="wording-text">${escapeHtml(text)}</p>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  function normalizeWordingResult(payload) {
+    const list = Array.isArray(payload?.wordings) ? payload.wordings : Array.isArray(payload) ? payload : null;
+    const options = Array.isArray(payload?.options) ? payload.options : null;
+    if (!list && options?.length) {
+      return options
+        .slice(0, 5)
+        .map((item, i) => {
+          const angle = String(item?.angle || "").trim();
+          const hook = String(item?.hook || "").trim();
+          const body = String(item?.body || "").trim();
+          const cta = String(item?.cta || "").trim();
+          const captionFull = String(item?.caption_full || "").trim();
+          const text =
+            captionFull ||
+            [hook, body, cta]
+              .filter(Boolean)
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim();
+          return {
+            mood: angle || WORDING_MOODS[i] || `Humeur ${i + 1}`,
+            text,
+          };
+        })
+        .filter((item) => item.text.length > 0);
+    }
+    if (!list || !list.length) return [];
+    return list
+      .slice(0, 5)
+      .map((item, i) => ({
+        mood: String(item?.mood || WORDING_MOODS[i] || `Humeur ${i + 1}`).trim(),
+        text: String(item?.text || item?.wording || "").trim(),
+      }))
+      .filter((item) => item.text.length > 0);
+  }
+
+  async function generateWordingsFromExcerpt() {
+    if (!reviewState?.editedSegments?.length) {
+      showToast("Aucun segment disponible pour generer les wordings.");
+      return;
+    }
+    const apiKey = String(apiKeyInput?.value || "").trim();
+    if (!apiKey) {
+      showToast("Ajoute une cle d'acces equipe pour la generation wording.");
+      if (reviewWordingStatus) reviewWordingStatus.textContent = "Cle API requise pour generer.";
+      return;
+    }
+    const excerpt = buildWordingExcerpt();
+    if (!excerpt) {
+      showToast("Impossible de construire un extrait exploitable.");
+      return;
+    }
+
+    wordingState.loading = true;
+    wordingState.items = [];
+    wordingState.source = excerpt.source;
+    if (reviewWordingSource) reviewWordingSource.textContent = excerpt.source;
+    renderWordingResults();
+
+    const subject = `Teaser social pour "${reviewState?.baseName || "episode"}"`;
+    const briefBlock = [
+      `Platform: ${WORDING_BRIEF_DEFAULTS.platform}`,
+      `Brand voice: ${WORDING_BRIEF_DEFAULTS.tone}`,
+      `Subject: ${subject}`,
+      `Audience: ${WORDING_BRIEF_DEFAULTS.audience}`,
+      `Objective: ${WORDING_BRIEF_DEFAULTS.objective}`,
+      `Language: ${WORDING_BRIEF_DEFAULTS.language}`,
+      `MaxChars: ${WORDING_BRIEF_DEFAULTS.maxChars}`,
+      `Number: ${WORDING_MOODS.length}`,
+    ].join("\n");
+    const trendPack = [];
+
+    const systemPrompt = [
+      "You are a senior social media copywriter for entertainment, streaming, and culture brands.",
+      "Generate exactly 5 caption options from the brief.",
+      "Each option must use a different angle in this exact order: Humour, Emotion, Tension, Inspiration, Impact.",
+      "Write concise social-native copy. No generic filler.",
+      "Forbidden phrases: \"Decouvrez\", \"Don't miss out\", \"Game-changer\".",
+      "caption_full must be <= MaxChars unless brief says otherwise.",
+      "Use at least one emoji per option when relevant.",
+      "If TrendPack is empty, set trend_status to no_relevant_live_trend_found and do not invent sources.",
+      "Return ONLY valid JSON with this structure:",
+      "{\"trend_status\":\"trend_used|no_relevant_live_trend_found\",\"options\":[{\"angle\":\"...\",\"hook\":\"...\",\"body\":\"...\",\"cta\":\"...\",\"caption_full\":\"...\",\"char_count\":0,\"pattern_note\":\"...\"}],\"wordings\":[{\"mood\":\"Humour\",\"text\":\"...\"},{\"mood\":\"Emotion\",\"text\":\"...\"},{\"mood\":\"Tension\",\"text\":\"...\"},{\"mood\":\"Inspiration\",\"text\":\"...\"},{\"mood\":\"Impact\",\"text\":\"...\"}]}",
+      "The wordings array is mandatory and must contain exactly 5 items.",
+    ].join(" ");
+    const userPrompt = [
+      "<brief>",
+      briefBlock,
+      "</brief>",
+      "",
+      "<trend_input>",
+      `TrendPack: ${JSON.stringify(trendPack)}`,
+      "</trend_input>",
+      "",
+      "Full transcript context (ordered STT segments):",
+      excerpt.text,
+      "",
+      "Output constraints:",
+      "- Return exactly 5 options and exactly 5 wordings.",
+      "- Each option: hook + body (max 3 short lines) + CTA.",
+      "- Each wording text must stay short, catchy, social media friendly.",
+      "- Leverage the full transcript context, not only one sentence.",
+    ].join("\n");
+
+    try {
+      const res = await fetch(GROQ_CHAT_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: WORDING_MODEL,
+          temperature: 0.82,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!res.ok) throw new Error("GENERIC");
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseJsonLoose(content);
+      const normalized = normalizeWordingResult(parsed);
+      if (!normalized.length) throw new Error("GENERIC");
+      while (normalized.length < 5) {
+        const idx = normalized.length;
+        normalized.push({
+          mood: WORDING_MOODS[idx] || `Humeur ${idx + 1}`,
+          text: "Version indisponible pour cette humeur.",
+        });
+      }
+      wordingState.items = normalized.slice(0, 5);
+      renderWordingResults();
+    } catch {
+      wordingState.items = [];
+      renderWordingResults();
+      showToast("Echec de generation wording. Reessaie dans quelques secondes.");
+      if (reviewWordingStatus) reviewWordingStatus.textContent = "Erreur de generation.";
+    } finally {
+      wordingState.loading = false;
+      renderWordingResults();
+    }
+  }
+
+  function captureReviewFrame() {
+    if (reviewPlayer.classList.contains("hidden")) {
+      showToast("La capture frame est disponible uniquement en mode vidéo.");
+      return;
+    }
+    if (!reviewPlayer.videoWidth || !reviewPlayer.videoHeight) {
+      showToast("Vidéo non prête. Lance la lecture puis réessaie.");
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = reviewPlayer.videoWidth;
+    canvas.height = reviewPlayer.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(reviewPlayer, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          showToast("Impossible de capturer cette frame.");
+          return;
+        }
+        const tMs = Math.floor((reviewPlayer.currentTime || 0) * 1000);
+        const base = reviewState?.baseName || "cover";
+        const name = `${base}_cover_t${tMs}.jpg`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(`Capture téléchargée: ${name}`);
+      },
+      "image/jpeg",
+      0.94
+    );
+  }
+
+  function buildSrtFromSegments(segments) {
+    const hasSpeakerData = (Array.isArray(segments) ? segments : []).some((seg) => !!normalizeSpeaker(seg?.speaker));
+    return hasSpeakerData ? toSrtWithSpeakers(segments, { labelEveryCue: true }) : toSrt(segments);
+  }
+
+  function setReviewActiveIndex(index) {
+    reviewActiveIndex = Number.isFinite(index) ? index : -1;
+    reviewList.querySelectorAll(".review-row").forEach((row, i) => {
+      row.classList.toggle("is-active", i === reviewActiveIndex);
+      if (i === reviewActiveIndex) {
+        row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    });
+    updateSubtitlePreview(reviewActiveIndex);
+    const excerpt = buildWordingExcerpt();
+    if (reviewWordingSource && excerpt?.source) reviewWordingSource.textContent = excerpt.source;
+  }
+
+  function renderReviewList() {
+    if (!reviewState || !Array.isArray(reviewState.editedSegments)) {
+      reviewList.innerHTML = "";
+      reviewStats.textContent = "0 segments";
+      return;
+    }
+    reviewStats.textContent = `${reviewState.editedSegments.length} segments`;
+    const rows = reviewState.editedSegments
+      .map((seg, idx) => {
+        const speaker = String(seg?.speaker || "");
+        const text = String(seg?.text || "");
+        const rgb = speakerColorRgb(speaker);
+        return `
+          <div class="review-row" data-idx="${idx}" style="--speaker-rgb:${rgb}">
+            <div class="review-time">${formatReviewTime(seg.start)}</div>
+            <div class="review-time">${formatReviewTime(seg.end)}</div>
+            <input class="review-speaker" data-field="speaker" data-idx="${idx}" value="${speaker.replace(/"/g, "&quot;")}" placeholder="SPEAKER_00" />
+            <textarea class="review-text" data-field="text" data-idx="${idx}">${text}</textarea>
+            <button type="button" class="review-jump" data-jump="${idx}" title="Aller au segment">▶</button>
+          </div>
+        `;
+      })
+      .join("");
+    reviewList.innerHTML = rows;
+    setReviewActiveIndex(reviewActiveIndex);
+  }
+
+  function openReviewPanel(baseName, segments, originalFile) {
+    cleanupReviewMedia();
+    reviewState = {
+      baseName,
+      originalSegments: cloneSegmentsForReview(segments),
+      editedSegments: cloneSegmentsForReview(segments),
+    };
+    reviewMeta.textContent = `${baseName}_transcription_corrigee.srt`;
+    if (reviewOverlayToggle) reviewOverlayToggle.checked = true;
+    if (reviewPanelToggle) reviewPanelToggle.checked = true;
+
+    if (originalFile) {
+      const isVideo = (originalFile.type || "").startsWith("video/") || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(originalFile.name || "");
+      const isAudio = (originalFile.type || "").startsWith("audio/");
+      if (isVideo || isAudio) {
+        reviewMediaUrl = URL.createObjectURL(originalFile);
+        if (isVideo) {
+          reviewPlayer.src = reviewMediaUrl;
+          reviewPlayer.classList.remove("hidden");
+          reviewAudioPlayer.classList.add("hidden");
+        } else {
+          reviewAudioPlayer.src = reviewMediaUrl;
+          reviewAudioPlayer.classList.remove("hidden");
+          reviewPlayer.classList.add("hidden");
+        }
+      }
+    }
+
+    resetWordingState();
+    renderReviewList();
+    setReviewActiveIndex(0);
+    uploadPanel.hidden = true;
+    progressPanel.hidden = true;
+    exportPanel.hidden = true;
+    reviewPanel.hidden = false;
+    actionRow.hidden = true;
+    sr("Relecture prête. Corrige les segments puis exporte le .srt.");
+  }
 
   // ========= Events =========
   extractAudio.addEventListener("change", () => {
@@ -800,6 +1353,8 @@
   if (localMode) localMode.checked = savedLocalMode === "1";
   const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
   if (backendUrlInput) backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
+  const savedReviewMode = localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
+  if (reviewMode) reviewMode.checked = savedReviewMode == null ? true : savedReviewMode === "1";
   syncModeUi();
 
   apiKeyInput.oninput = () => {
@@ -819,11 +1374,116 @@
       refreshRunButton();
     };
   }
+  if (reviewMode) {
+    reviewMode.onchange = () => {
+      localStorage.setItem(REVIEW_MODE_STORAGE_KEY, reviewMode.checked ? "1" : "0");
+    };
+  }
 
   newTranscriptionBtn.onclick = () => {
     setSelectedFile(null);
     fileInput.value = "";
     resetUI();
+  };
+
+  reviewList.addEventListener("input", (e) => {
+    if (!reviewState) return;
+    const target = e.target;
+    const idx = Number(target?.dataset?.idx);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= reviewState.editedSegments.length) return;
+    if (target.dataset.field === "text") {
+      reviewState.editedSegments[idx].text = String(target.value || "");
+    } else if (target.dataset.field === "speaker") {
+      reviewState.editedSegments[idx].speaker = String(target.value || "");
+      const row = target.closest(".review-row");
+      if (row) row.style.setProperty("--speaker-rgb", speakerColorRgb(target.value));
+    }
+    setReviewActiveIndex(idx);
+  });
+
+  reviewList.addEventListener("click", (e) => {
+    if (!reviewState) return;
+    const row = e.target.closest(".review-row");
+    if (row?.dataset?.idx && !e.target.closest("[data-jump]")) {
+      setReviewActiveIndex(Number(row.dataset.idx));
+    }
+    const btn = e.target.closest("[data-jump]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.jump);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= reviewState.editedSegments.length) return;
+    const media = getReviewMediaElement();
+    if (media) {
+      media.currentTime = Math.max(0, Number(reviewState.editedSegments[idx].start) || 0);
+      media.play?.().catch(() => {});
+    }
+    setReviewActiveIndex(idx);
+  });
+
+  if (reviewOverlayToggle) {
+    reviewOverlayToggle.addEventListener("change", () => updateSubtitlePreview(reviewActiveIndex));
+  }
+  if (reviewPanelToggle) {
+    reviewPanelToggle.addEventListener("change", () => updateSubtitlePreview(reviewActiveIndex));
+  }
+  if (reviewCaptureBtn) {
+    reviewCaptureBtn.addEventListener("click", () => captureReviewFrame());
+  }
+  if (reviewWordingGenerateBtn) {
+    reviewWordingGenerateBtn.addEventListener("click", () => {
+      generateWordingsFromExcerpt();
+    });
+  }
+  if (reviewWordingList) {
+    reviewWordingList.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-copy-wording]");
+      if (!btn) return;
+      const idx = Number(btn.dataset.copyWording);
+      const item = wordingState.items[idx];
+      if (!item?.text) return;
+      try {
+        await navigator.clipboard.writeText(item.text);
+        showToast(`Wording ${idx + 1} copie.`);
+      } catch {
+        showToast("Impossible de copier automatiquement.");
+      }
+    });
+  }
+
+  [reviewPlayer, reviewAudioPlayer].forEach((media) => {
+    media.addEventListener("timeupdate", () => {
+      if (!reviewState?.editedSegments?.length) return;
+      const active = findActiveSegmentIndexAtTime(media.currentTime);
+      if (active !== reviewActiveIndex) setReviewActiveIndex(active);
+    });
+  });
+
+  reviewResetBtn.onclick = () => {
+    if (!reviewState) return;
+    reviewState.editedSegments = cloneSegmentsForReview(reviewState.originalSegments);
+    renderReviewList();
+    resetWordingState();
+    sr("Corrections réinitialisées.");
+  };
+
+  reviewDownloadBtn.onclick = () => {
+    if (!reviewState) return;
+    const safeSegments = reviewState.editedSegments
+      .map((seg) => ({
+        ...seg,
+        text: String(seg.text || "").trim(),
+      }))
+      .filter((seg) => seg.text.length > 0);
+    if (!safeSegments.length) {
+      showToast("Aucun segment valide à exporter.");
+      return;
+    }
+    const content = buildSrtFromSegments(safeSegments);
+    const fileName = `${reviewState.baseName}_transcription_corrigee.srt`;
+    download(content, fileName);
+    exportMeta.textContent = `${fileName} · ${safeSegments.length} segments`;
+    reviewPanel.hidden = true;
+    exportPanel.hidden = false;
+    sr("SRT corrigé téléchargé.");
   };
 
   // ========= Navigation =========
@@ -979,22 +1639,30 @@
       const segments = Array.isArray(data.segments) ? data.segments : [];
       if (!segments.length) throw new Error("NO_SEGMENTS");
 
-      const hasSpeakerData = segments.some((seg) => !!normalizeSpeaker(seg?.speaker));
-      const srtContent = hasSpeakerData ? toSrtWithSpeakers(segments) : toSrt(segments);
-      const srtFileName = `${baseName}_transcription.srt`;
-      download(srtContent, srtFileName);
+      const reviewEnabled = !!reviewMode?.checked;
+      let srtFileName = `${baseName}_transcription.srt`;
+      if (reviewEnabled) {
+        openReviewPanel(baseName, segments, selectedFile);
+      } else {
+        const srtContent = buildSrtFromSegments(segments);
+        download(srtContent, srtFileName);
+      }
 
       setStep("format", "done");
       setProgress(100);
       recordJobStat(fileToSend.size, modeKey, Date.now() - jobT0);
       stopRemainTimer();
       setEta("Terminé");
-      sr("Transcription terminée. Le fichier .srt a été téléchargé.");
+      sr(reviewEnabled ? "Transcription terminée. Relecture disponible." : "Transcription terminée. Le fichier .srt a été téléchargé.");
 
       setTimeout(() => {
         progressPanel.hidden = true;
-        exportPanel.hidden = false;
-        exportMeta.textContent = `${srtFileName} · ${segments.length} segments`;
+        if (reviewEnabled) {
+          exportPanel.hidden = true;
+        } else {
+          exportPanel.hidden = false;
+          exportMeta.textContent = `${srtFileName} · ${segments.length} segments`;
+        }
       }, 900);
     } catch (err) {
       stopFakeProgress();
@@ -1020,6 +1688,7 @@
   };
 
   // init
+  resetWordingState();
   initNav();
   setEta(ETA_TRANSCRIBE);
   refreshRunButton();
