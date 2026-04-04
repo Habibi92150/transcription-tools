@@ -90,7 +90,6 @@
     reviewActiveIndex = -1;
     reviewList.innerHTML = "";
     reviewMeta.textContent = "";
-    reviewStats.textContent = "0 segments";
     reviewOverlay.classList.add("hidden");
     reviewOverlaySpeaker.textContent = "";
     reviewOverlayText.textContent = "";

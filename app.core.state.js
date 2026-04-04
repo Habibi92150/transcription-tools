@@ -45,7 +45,6 @@
   const reviewPanelToggle = $("reviewPanelToggle");
   const reviewList = $("reviewList");
   const reviewMeta = $("reviewMeta");
-  const reviewStats = $("reviewStats");
   const reviewDownloadBtn = $("reviewDownloadBtn");
   const reviewResetBtn = $("reviewResetBtn");
   const reviewCaptureBtn = $("reviewCaptureBtn");

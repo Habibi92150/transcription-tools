@@ -114,8 +114,8 @@
 
           <div>
           <div class="studio-badge">SMM STUDIO</div>
-          <p class="info-headline">Zéro friction,<br><span>100% prêt à poster.</span></p>
-          <p class="info-tagline">Dépose. Transcrit. Poste.</p>
+          <p class="info-headline">Tes sous-titres,<br><span>sans la galère.</span></p>
+          <p class="info-tagline">Du rush au .srt en quelques clics.</p>
         </div>
 
         <div class="info-steps">
@@ -128,8 +128,8 @@
               </svg>
             </div>
             <div class="info-step-body">
-              <p class="info-step-title">Balance ton fichier</p>
-              <p class="info-step-desc">MP4, MP3, peu importe. Glisse ta vidéo ou ton audio — même les rushs bruts non montés.</p>
+              <p class="info-step-title">Dépose ton fichier</p>
+              <p class="info-step-desc">MP4, MP3, rush brut ou monté — tout passe.</p>
             </div>
           </div>
 
@@ -143,8 +143,8 @@
               </svg>
             </div>
             <div class="info-step-body">
-              <p class="info-step-title">Whisper s'occupe du reste</p>
-              <p class="info-step-desc">L'Assistant transcrit chaque mot avec les timecodes exacts. Pas de relecteur, pas d'attente.</p>
+              <p class="info-step-title">L'IA transcrit à ta place</p>
+              <p class="info-step-desc">Timecodes précis, chaque mot capté. Tu ne relis que si tu veux.</p>
             </div>
           </div>
 
@@ -159,7 +159,7 @@
             </div>
             <div class="info-step-body">
               <p class="info-step-title">Ton .srt est prêt</p>
-              <p class="info-step-desc">Téléchargement automatique. Importe-le dans Premiere, CapCut ou DaVinci — dans la boîte.</p>
+              <p class="info-step-desc">Importe direct dans Premiere, CapCut ou DaVinci. Aucune friction.</p>
             </div>
           </div>
 
@@ -167,7 +167,7 @@
 
           <div class="info-footer">
           <div class="info-footer-dot"></div>
-          <p class="info-footer-text">Aucun fichier conservé · données locales uniquement</p>
+          <p class="info-footer-text">Aucun fichier stocké · tout reste sur ton ordi.</p>
         </div>
 
       </div>
@@ -353,7 +353,6 @@
             <p class="review-title">Relecture interne</p>
             <p class="review-sub" id="reviewMeta">Corrige les segments puis exporte le .srt final.</p>
           </div>
-          <div class="review-stats" id="reviewStats">0 segments</div>
         </div>
 
         <div class="review-layout">
@@ -406,19 +405,29 @@
               <div class="review-side-head">
                 <p class="review-side-kicker">NOUVELLE FEATURE</p>
                 <h3 class="review-side-title">Génération wording</h3>
-                <p class="review-side-text">Génère 5 légendes Instagram courtes et percutantes à partir de la transcription (extrait intelligent début · milieu · fin si l’épisode est très long).</p>
+                <p class="review-side-text">Légendes Instagram courtes à partir de la transcription — bientôt disponible.</p>
               </div>
-              <div class="review-side-slot" id="reviewFutureSlot">
-                <div class="wording-tools">
-                  <button class="btn btn-primary wording-generate-btn" id="reviewWordingGenerateBtn" type="button">Générer 5 wordings</button>
-                  <p class="wording-source" id="reviewWordingSource">Contexte : extrait Instagram (début · milieu · fin si long)</p>
-                  <p class="wording-status" id="reviewWordingStatus">En attente de génération.</p>
-                </div>
-                <div class="wording-list" id="reviewWordingList" aria-live="polite">
-                  <div class="wording-empty">
-                    Clique sur « Générer 5 wordings » pour créer des variantes (humour, émotion, tension, etc.).
-                  </div>
-                </div>
+              <div class="review-side-slot wording-empty-state" id="reviewFutureSlot" aria-live="polite">
+                <svg
+                  class="wording-empty-illustration"
+                  width="80"
+                  height="80"
+                  viewBox="0 0 80 80"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <g stroke="rgba(255,255,255,0.3)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="14" y1="24" x2="56" y2="24" />
+                    <line x1="14" y1="36" x2="66" y2="36" />
+                    <line x1="14" y1="48" x2="50" y2="48" />
+                    <line x1="14" y1="60" x2="42" y2="60" />
+                    <path d="M54 50l12-12M64 38l2 2M60 36l2-2" />
+                  </g>
+                </svg>
+                <p class="wording-empty-title">Bientôt disponible</p>
+                <p class="wording-empty-desc">Les légendes Instagram générées depuis ta transcription arrivent.</p>
+                <span class="wording-empty-pill">En cours de développement</span>
               </div>
             </div>
           </aside>
