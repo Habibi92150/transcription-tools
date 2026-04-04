@@ -273,10 +273,8 @@
   function renderReviewList() {
     if (!reviewState || !Array.isArray(reviewState.editedSegments)) {
       reviewList.innerHTML = "";
-      reviewStats.textContent = "0 segments";
       return;
     }
-    reviewStats.textContent = `${reviewState.editedSegments.length} segments`;
     const rows = reviewState.editedSegments
       .map((seg, idx) => {
         const speaker = String(seg?.speaker || "");
