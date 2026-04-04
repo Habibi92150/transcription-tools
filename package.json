@@ -3,9 +3,7 @@
   "private": true,
   "scripts": {
     "serve:front": "npx serve .",
-    "start:backend": "node backend/server.js",
-    "setup:diarizer-python": "py -3.11 -m venv backend/diarizer-service/.venv && backend/diarizer-service/.venv/Scripts/python.exe -m pip install --upgrade pip && backend/diarizer-service/.venv/Scripts/python.exe -m pip install -r backend/diarizer-service/requirements.txt",
-    "start:diarizer-python": "cd backend/diarizer-service && .venv\\Scripts\\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8790"
+    "start:backend": "node backend/server.js"
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.6",

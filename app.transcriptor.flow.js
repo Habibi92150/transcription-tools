@@ -450,26 +450,8 @@
       let segments = Array.isArray(data.segments) ? data.segments : [];
       if (!segments.length) throw new Error("NO_SEGMENTS");
 
-      if (!localBackendMode) {
-        const base = String(backendUrl || "").replace(/\/$/, "").trim();
-        if (base) {
-          try {
-            setEta("Alignement des interlocuteurs…");
-            sr("Diarisation des interlocuteurs via le backend…");
-            const payload = segments.map((s) => ({
-              start: s.start,
-              end: s.end,
-              text: s.text,
-            }));
-            const aligned = await postBackendAlignSpeakers(`${base}/api/align-speakers`, fileToSend, payload);
-            if (Array.isArray(aligned.segments) && aligned.segments.length) {
-              segments = aligned.segments;
-            }
-          } catch (alignErr) {
-            console.warn("[align-speakers]", alignErr);
-          }
-        }
-      }
+      // Mode Gratuit (Groq dans le navigateur) : pas de diarisation ni align-speakers.
+      // Les locuteurs ne sont pas détectés ; le Premium reste sur /api/transcribe (backend) inchangé.
 
       const reviewEnabled = !!reviewMode?.checked;
       let srtFileName = `${baseName}_transcription.srt`;
