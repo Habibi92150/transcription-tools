@@ -30,10 +30,6 @@ const DIARIZATION_HOP_SEC = Math.max(0.1, Number(process.env.DIARIZATION_HOP_SEC
 const DIARIZATION_CONTINUITY_BONUS = Math.max(0, Number(process.env.DIARIZATION_CONTINUITY_BONUS || 0.2));
 const WHISPER_BEAM_SIZE = Math.max(1, Number(process.env.WHISPER_BEAM_SIZE || 8));
 const WHISPER_BEST_OF = Math.max(1, Number(process.env.WHISPER_BEST_OF || 8));
-const DIARIZATION_PROVIDER = String(process.env.DIARIZATION_PROVIDER || "local").trim().toLowerCase();
-const DIARIZER_URL = String(process.env.DIARIZER_URL || "http://127.0.0.1:8790").trim().replace(/\/$/, "");
-const DIARIZER_API_KEY = String(process.env.DIARIZER_API_KEY || "").trim();
-const DIARIZER_TIMEOUT_MS = Math.max(5000, Number(process.env.DIARIZER_TIMEOUT_MS || 180000));
 const STT_ENGINE = String(process.env.STT_ENGINE || "whisper-cpp").trim().toLowerCase();
 const GROQ_STT_MODEL = String(process.env.GROQ_STT_MODEL || "whisper-large-v3-turbo").trim();
 const GROQ_STT_TEMPERATURE = String(process.env.GROQ_STT_TEMPERATURE ?? "0");
@@ -369,55 +365,6 @@ function smoothLabels(labels) {
   return out;
 }
 
-function normalizeSpeakerLabel(value) {
-  const s = String(value || "").trim();
-  if (!s) return null;
-  const m = s.match(/\d+/);
-  if (m) return `SPEAKER_${String(Number(m[0])).padStart(2, "0")}`;
-  return s.toUpperCase().replace(/\s+/g, "_");
-}
-
-function normalizeDiarizationSegments(raw) {
-  const items = Array.isArray(raw?.segments) ? raw.segments : Array.isArray(raw) ? raw : [];
-  const out = [];
-  for (const seg of items) {
-    const speaker = normalizeSpeakerLabel(seg?.speaker);
-    const start = Number(seg?.start);
-    const end = Number(seg?.end);
-    if (!speaker || !Number.isFinite(start) || !Number.isFinite(end)) continue;
-    out.push({ speaker, start: Math.max(0, start), end: Math.max(start, end) });
-  }
-  return out.sort((a, b) => a.start - b.start);
-}
-
-function temporalOverlap(a0, a1, b0, b1) {
-  return Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
-}
-
-function mergeTranscriptWithDiarization(segments, diarizationSegments) {
-  if (!Array.isArray(segments) || !segments.length) return [];
-  if (!Array.isArray(diarizationSegments) || !diarizationSegments.length) {
-    return segments.map((s) => ({ ...s, speaker: "SPEAKER_00" }));
-  }
-
-  let lastSpeaker = diarizationSegments[0].speaker || "SPEAKER_00";
-  return segments.map((seg) => {
-    const s0 = Number(seg.start) || 0;
-    const s1 = Math.max(s0, Number(seg.end) || s0);
-    let best = null;
-    let bestOverlap = 0;
-    for (const d of diarizationSegments) {
-      const ov = temporalOverlap(s0, s1, d.start, d.end);
-      if (ov > bestOverlap) {
-        bestOverlap = ov;
-        best = d;
-      }
-    }
-    if (best && bestOverlap > 0) lastSpeaker = best.speaker;
-    return { ...seg, speaker: best?.speaker || lastSpeaker || "SPEAKER_00" };
-  });
-}
-
 function isRiffWaveBuffer(buf) {
   return (
     Buffer.isBuffer(buf) &&
@@ -440,7 +387,7 @@ async function bufferLooksLikeDecodableWav(buf) {
 }
 
 /**
- * Diarisation locale (wav-decoder) et pyannote attendent du PCM WAV.
+ * Diarisation locale (wav-decoder) attend du PCM WAV 16 kHz mono.
  * Les uploads MP3/MP4/M4A échouaient silencieusement → fallback gaps seulement.
  */
 async function ensureWavForDiarization(srcPath) {
@@ -581,38 +528,6 @@ async function applyVoiceAwareDiarization(filePath, segments) {
     return { segments: diarized, strategy: "voice-features-v2" };
   } catch {
     return { segments: applyGapHeuristicDiarization(segments), strategy: "gap-fallback" };
-  }
-}
-
-async function diarizeWithExternalService(filePath) {
-  const fileBuffer = await fs.readFile(filePath);
-  const base = path.basename(filePath) || "audio.wav";
-  const ext = (path.extname(base) || ".wav").toLowerCase();
-  const mime = ext === ".wav" ? "audio/wav" : "application/octet-stream";
-  const uploadName = ext === ".wav" ? "audio.wav" : base;
-  const form = new FormData();
-  form.append("file", new Blob([fileBuffer], { type: mime }), uploadName);
-  form.append("max_speakers", String(DIARIZATION_MAX_SPEAKERS));
-
-  const headers = {};
-  if (DIARIZER_API_KEY) headers.Authorization = `Bearer ${DIARIZER_API_KEY}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DIARIZER_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${DIARIZER_URL}/diarize`, {
-      method: "POST",
-      headers,
-      body: form,
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Diarizer HTTP ${res.status} ${body}`.trim());
-    }
-    const payload = await res.json();
-    return normalizeDiarizationSegments(payload);
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -1503,8 +1418,7 @@ app.get("/health", (_req, res) => {
     engine: sttIsGemini ? "gemini-audio" : sttIsGroq ? "groq-audio" : "whisper.cpp",
     modelConfigured: sttIsGemini ? true : sttIsGroq ? true : Boolean(WHISPER_MODEL_PATH),
     maxSpeakers: DIARIZATION_MAX_SPEAKERS,
-    diarizationProvider: DIARIZATION_PROVIDER,
-    diarizerUrl: DIARIZATION_PROVIDER === "pyannote-service" ? DIARIZER_URL : null,
+    diarizationProvider: "local",
     textCleanupProvider: TEXT_CLEANUP_PROVIDER,
     groqCleanupModel: TEXT_CLEANUP_PROVIDER === "groq" ? GROQ_CLEANUP_MODEL : null,
     geminiCleanupModel: TEXT_CLEANUP_PROVIDER === "gemini" ? GEMINI_CLEANUP_MODEL : null,
@@ -1578,17 +1492,6 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
       } else if (Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length) {
         diarizedSegments = applyGeminiSpeakerOverlay(segments, geminiOverlaySegments);
         diarizationStrategy = "gemini-speaker-overlay";
-      } else if (DIARIZATION_PROVIDER === "pyannote-service") {
-        try {
-          const diarizationSegments = await diarizeWithExternalService(wavForDiar.path);
-          diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
-          diarizationStrategy = "pyannote-service";
-        } catch (err) {
-          console.warn("[diarization] pyannote-service:", String(err?.message || err));
-          const fallback = await applyVoiceAwareDiarization(wavForDiar.path, segments);
-          diarizedSegments = fallback.segments;
-          diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
-        }
       } else {
         const local = await applyVoiceAwareDiarization(wavForDiar.path, segments);
         diarizedSegments = local.segments;
@@ -1653,7 +1556,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
-/** Groq/STT côté navigateur puis fusion locuteurs : même pipeline pyannote / local que /api/transcribe, sans STT ni Gemini. */
+/** Diarisation locale sur segments existants (sans STT). */
 app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
@@ -1683,22 +1586,9 @@ app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
     let diarizedSegments = null;
     let diarizationStrategy = "none";
     try {
-      if (DIARIZATION_PROVIDER === "pyannote-service") {
-        try {
-          const diarizationSegments = await diarizeWithExternalService(wavForDiar.path);
-          diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
-          diarizationStrategy = "pyannote-service";
-        } catch (err) {
-          console.warn("[align-speakers] pyannote-service:", String(err?.message || err));
-          const fallback = await applyVoiceAwareDiarization(wavForDiar.path, segments);
-          diarizedSegments = fallback.segments;
-          diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
-        }
-      } else {
-        const local = await applyVoiceAwareDiarization(wavForDiar.path, segments);
-        diarizedSegments = local.segments;
-        diarizationStrategy = local.strategy;
-      }
+      const local = await applyVoiceAwareDiarization(wavForDiar.path, segments);
+      diarizedSegments = local.segments;
+      diarizationStrategy = local.strategy;
     } finally {
       if (wavForDiar.cleanup) await wavForDiar.cleanup();
     }
@@ -1707,7 +1597,7 @@ app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
       segments: diarizedSegments,
       meta: {
         diarization: diarizationStrategy,
-        diarizationProvider: DIARIZATION_PROVIDER,
+        diarizationProvider: "local",
       },
     });
   } catch (err) {

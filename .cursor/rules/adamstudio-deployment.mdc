@@ -1,0 +1,45 @@
+---
+description: Déploiement adamstudio.duckdns.org — config API, Groq/Premium, contraintes secrets
+alwaysApply: true
+---
+
+# Déploiement (carry forward)
+
+- **Repo :** `https://github.com/Habibi92150/transcription-tools`
+- **Prod :** `https://adamstudio.duckdns.org/`
+- **Stack :** front statique (workspace git) + **Node backend en Docker** sur NUC, derrière **nginx**.
+- **Modes :** **Gratuit** = Groq STT seul · **Premium** = Groq STT + nettoyage texte **Gemini** (côté serveur si clé présente).
+
+## Config runtime (jamais de secrets dans le source tracké)
+
+- Les clés et l’URL backend ne sont **pas** hardcodées dans les fichiers versionnés : elles viennent du **`.env`** sur le serveur (non commité).
+- Le front récupère ce qui est exposé via **`GET /api/config`** (implémenté dans `backend/server.js`), p.ex. :
+  - `groqApiKey` ← `process.env.GROQ_API_KEY`
+  - `backendUrl` ← selon déploiement (peut rester vide si même origine).
+- Au **démarrage**, le front peut pré-remplir les champs cachés `apiKeyInput` / `backendUrlInput` depuis cette réponse **sans interaction utilisateur**, puis appeler `refreshRunButton()`.
+
+## Décisions déjà prises en prod — ne pas annuler ni dupliquer
+
+1. **`app.core.state.js`** — `DEFAULT_BACKEND_URL` pointe vers la prod : **`https://adamstudio.duckdns.org`** (plus `http://localhost:8787` pour le déploiement public ; le dev local peut toujours surcharger via champ / localStorage).
+
+2. **`app.transcriptor.flow.js`** — en-tête **`x-skip-gemini`** :
+   - **Bug corrigé :** ne plus envoyer `x-skip-gemini: 1` sur **toutes** les requêtes.
+   - **Comportement attendu :** n’ajouter `x-skip-gemini: "1"` que lorsque **`!localBackendMode`** (mode Gratuit / cloud Groq sans cleanup Gemini côté client) ; en **Premium** (backend local avec `.env`), **ne pas** envoyer l’en-tête → le serveur utilise **`GEMINI_API_KEY`** s’il est défini.
+
+3. **`backend/server.js`** — endpoint **`GET /api/config`** avant `app.listen`, qui renvoie du JSON safe (pas de logique de secrets en constantes de module ; uniquement `process.env.*`).
+
+## Contraintes MUST
+
+- **`apiKeyInput`** et **`backendUrlInput`** restent **cachés** dans le HTML (`hidden`) — ne pas les rendre visibles pour « simplifier ».
+- **Ne jamais** committer de clés API dans un fichier tracké ; **`.env`** reste untracked.
+- **Ne pas** remplacer `process.env.*` par des constantes de module pour des secrets dans `backend/server.js`.
+- Ne pas casser la logique Gratuit / Premium au-delà de ce qui est documenté ci-dessus (skip Gemini conditionnel, config injectée).
+
+## Référence rapide
+
+| Sujet | Fichiers typiques |
+|--------|-------------------|
+| URL backend défaut | `app.core.state.js` |
+| Headers transcription | `app.transcriptor.flow.js` |
+| Config exposée | `backend/server.js` (`/api/config`) |
+| Champs cachés | `index.html` |

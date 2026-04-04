@@ -16,5 +16,3 @@ npm run start:backend
 ```
 
 Exécuter `npm run start:backend` en **arrière-plan** pour qu’il reste actif. Contrôle rapide : `GET http://127.0.0.1:8787/health`.
-
-Ne redémarre le service diarizer Python (8790) que si tu as touché `backend/diarizer-service/` ou sa config.
