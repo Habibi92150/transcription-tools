@@ -28,6 +28,11 @@ alwaysApply: true
 
 3. **`backend/server.js`** — endpoint **`GET /api/config`** avant `app.listen`, qui renvoie du JSON safe (pas de logique de secrets en constantes de module ; uniquement `process.env.*`).
 
+4. **Premium (PIN + token)** — sur le serveur, le fichier **`backend/.env`** (non versionné) doit inclure les mêmes variables que dans **`backend/.env.example`** :
+   - **`PREMIUM_PIN`** — code attendu quand l’utilisateur valide la modale Premium dans le front.
+   - **`PREMIUM_SECRET`** — secret long et aléatoire (ex. `openssl rand -hex 32`) pour signer les tokens ; sans les deux, `/api/auth/premium` répond 503 et la diarisation overlay ne s’active pas via token.
+   Après toute modification : **redémarrer** le backend Docker / Node. En prod, le front et l’API sont en **même origine** : les requêtes `POST /api/auth/premium` et `x-premium-token` sur `/api/transcribe` utilisent ce `.env` sur le NUC.
+
 ## Contraintes MUST
 
 - **`apiKeyInput`** et **`backendUrlInput`** restent **cachés** dans le HTML (`hidden`) — ne pas les rendre visibles pour « simplifier ».
@@ -42,4 +47,5 @@ alwaysApply: true
 | URL backend défaut | `app.core.state.js` |
 | Headers transcription | `app.transcriptor.flow.js` |
 | Config exposée | `backend/server.js` (`/api/config`) |
+| PIN Premium / secret HMAC | `backend/.env` (`PREMIUM_PIN`, `PREMIUM_SECRET`) · `backend/server.js` (`/api/auth/premium`, `validatePremiumToken`) |
 | Champs cachés | `index.html` |
