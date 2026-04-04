@@ -1,0 +1,20 @@
+---
+description: Redémarrer le serveur Node backend après modifications (port 8787)
+alwaysApply: true
+---
+
+# Backend Node
+
+Après toute modification de `backend/server.js`, de `backend/.env`, ou des dépendances npm utilisées par le backend, **redémarrer le serveur** toi-même (ne pas laisser l’utilisateur le faire seul).
+
+**Windows (PowerShell)** — racine du projet (`eloquent-jang`) :
+
+```powershell
+Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 500
+npm run start:backend
+```
+
+Exécuter `npm run start:backend` en **arrière-plan** pour qu’il reste actif. Contrôle rapide : `GET http://127.0.0.1:8787/health`.
+
+Ne redémarre le service diarizer Python (8790) que si tu as touché `backend/diarizer-service/` ou sa config.
