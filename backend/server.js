@@ -1797,6 +1797,12 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
   }
 });
 
+
+// Config publique pour le frontend
+app.get('/api/config', (_req, res) => {
+  res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: '' });
+});
+
 app.listen(PORT, async () => {
   await fs.mkdir(TMP_DIR, { recursive: true }).catch(() => {});
   console.log(`Backend listening on http://localhost:${PORT}`);
