@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang log --oneline -10)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show dializeur:app.js)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:app.js)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang log --all --oneline --graph)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang log --all --oneline)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang log wipdia --oneline)",
+      "Bash(git -C /c/dev/transcription-tools ls-tree -r HEAD --name-only)",
+      "Bash(grep -E \"\\\\.py$|requirements|backend\")",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang ls-tree -r HEAD --name-only)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang ls-tree -r wipdia --name-only)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:backend/server.py)",
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:backend/requirements.txt)"
+    ]
+  }
+}
