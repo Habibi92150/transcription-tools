@@ -1504,7 +1504,9 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 
   try {
     const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
-    const geminiKeyForReq = String(req.headers["x-gemini-api-key"] || GEMINI_API_KEY || "").trim();
+    const userGeminiHeader = String(req.headers["x-gemini-api-key"] || "").trim();
+    const skipGemini = /^(1|true|yes|on)$/i.test(String(req.headers["x-skip-gemini"] || "").trim());
+    const geminiKeyForReq = userGeminiHeader || (skipGemini ? "" : GEMINI_API_KEY);
 
     let segments;
     let sttStrategy = "whisper-cpp";
@@ -1606,6 +1608,70 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
           : {}),
         language: WHISPER_LANGUAGE,
         textCleanup: textCleanupStrategy,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: String(err?.message || err) });
+  } finally {
+    await fs.unlink(uploadedPath).catch(() => {});
+  }
+});
+
+/** Groq/STT côté navigateur puis fusion locuteurs : même pipeline pyannote / local que /api/transcribe, sans STT ni Gemini. */
+app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
+  const uploadedPath = req.file?.path;
+  if (!uploadedPath) {
+    return res.status(400).json({ error: "No file provided" });
+  }
+
+  let segmentsIn;
+  try {
+    segmentsIn = JSON.parse(String(req.body?.segments || "[]"));
+  } catch {
+    await fs.unlink(uploadedPath).catch(() => {});
+    return res.status(400).json({ error: "Invalid segments JSON" });
+  }
+  if (!Array.isArray(segmentsIn) || !segmentsIn.length) {
+    await fs.unlink(uploadedPath).catch(() => {});
+    return res.status(400).json({ error: "segments must be a non-empty array" });
+  }
+
+  const segments = segmentsIn.map((seg) => ({
+    start: Number(seg?.start) || 0,
+    end: Math.max(Number(seg?.start) || 0, Number(seg?.end) || Number(seg?.start) || 0),
+    text: String(seg?.text ?? ""),
+  }));
+
+  try {
+    const wavForDiar = await ensureWavForDiarization(uploadedPath);
+    let diarizedSegments = null;
+    let diarizationStrategy = "none";
+    try {
+      if (DIARIZATION_PROVIDER === "pyannote-service") {
+        try {
+          const diarizationSegments = await diarizeWithExternalService(wavForDiar.path);
+          diarizedSegments = mergeTranscriptWithDiarization(segments, diarizationSegments);
+          diarizationStrategy = "pyannote-service";
+        } catch (err) {
+          console.warn("[align-speakers] pyannote-service:", String(err?.message || err));
+          const fallback = await applyVoiceAwareDiarization(wavForDiar.path, segments);
+          diarizedSegments = fallback.segments;
+          diarizationStrategy = `${fallback.strategy}-after-pyannote-failure`;
+        }
+      } else {
+        const local = await applyVoiceAwareDiarization(wavForDiar.path, segments);
+        diarizedSegments = local.segments;
+        diarizationStrategy = local.strategy;
+      }
+    } finally {
+      if (wavForDiar.cleanup) await wavForDiar.cleanup();
+    }
+
+    return res.json({
+      segments: diarizedSegments,
+      meta: {
+        diarization: diarizationStrategy,
+        diarizationProvider: DIARIZATION_PROVIDER,
       },
     });
   } catch (err) {

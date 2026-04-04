@@ -7,6 +7,8 @@
   const fileInput = $("fileInput");
   const apiKeyInput = $("apiKeyInput");
   const localMode = $("localMode");
+  const tierFreeBtn = $("tierFreeBtn");
+  const tierPaidBtn = $("tierPaidBtn");
   const backendUrlInput = $("backendUrlInput");
   const backendUrlRow = $("backendUrlRow");
   const geminiKeyField = $("geminiKeyField");

@@ -131,6 +131,13 @@ Reponse:
 
 > Note: en `DIARIZATION_PROVIDER=local`, le backend utilise un clustering de features de voix (2 locuteurs robustes) avec fallback. En `pyannote-service`, il utilise le diarizer dedie (recommande pour >2 locuteurs) puis fallback local en cas d'indisponibilite.
 
+### `POST /api/align-speakers`
+`multipart/form-data` : champ `file` (meme piste audio que pour la STT) + champ `segments` (JSON string, tableau `{ start, end, text }` issu p.ex. de Groq dans le navigateur).
+
+Pas de STT ni Gemini : applique uniquement la diarisation (`DIARIZATION_PROVIDER=pyannote-service` ou `local`) puis `mergeTranscriptWithDiarization`. Utilise par le front en **mode Gratuit** apres transcription Groq.
+
+Reponse : `{ "segments": [...], "meta": { "diarization", "diarizationProvider" } }`.
+
 ### `POST /api/episode-summary`
 `multipart/form-data` avec champ `file`.
 

@@ -68,12 +68,25 @@
       else localStorage.removeItem(GEMINI_KEY_STORAGE);
     });
   }
+  function setLocalBackendMode(enabled) {
+    if (!localMode) return;
+    localMode.checked = !!enabled;
+    localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
+    syncModeUi();
+    refreshRunButton();
+  }
   if (localMode) {
     localMode.onchange = () => {
       localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
       syncModeUi();
       refreshRunButton();
     };
+  }
+  if (tierFreeBtn) {
+    tierFreeBtn.addEventListener("click", () => setLocalBackendMode(false));
+  }
+  if (tierPaidBtn) {
+    tierPaidBtn.addEventListener("click", () => setLocalBackendMode(true));
   }
   if (backendUrlInput) {
     backendUrlInput.oninput = () => {
@@ -291,6 +304,7 @@
       const formData = new FormData();
       formData.append("file", fileToSend);
       if (!localBackendMode) {
+        // Mode Gratuit : Groq uniquement dans le navigateur (aucun backend, aucune Gemini).
         formData.append("model", "whisper-large-v3-turbo");
         formData.append("language", "fr");
         formData.append("temperature", "0");
@@ -300,6 +314,7 @@
       const backendHeaders = { "x-groq-api-key": apiKey || "" };
       const gk = geminiApiKeyInput?.value.trim();
       if (gk) backendHeaders["x-gemini-api-key"] = gk;
+      else backendHeaders["x-skip-gemini"] = "1";
 
       const data = localBackendMode
         ? await postBackendTranscription(
@@ -344,8 +359,29 @@
 
       // STEP 4 — Génération .srt
       setStep("format", "active");
-      const segments = Array.isArray(data.segments) ? data.segments : [];
+      let segments = Array.isArray(data.segments) ? data.segments : [];
       if (!segments.length) throw new Error("NO_SEGMENTS");
+
+      if (!localBackendMode) {
+        const base = String(backendUrl || "").replace(/\/$/, "").trim();
+        if (base) {
+          try {
+            setEta("Alignement des interlocuteurs…");
+            sr("Diarisation des interlocuteurs via le backend…");
+            const payload = segments.map((s) => ({
+              start: s.start,
+              end: s.end,
+              text: s.text,
+            }));
+            const aligned = await postBackendAlignSpeakers(`${base}/api/align-speakers`, fileToSend, payload);
+            if (Array.isArray(aligned.segments) && aligned.segments.length) {
+              segments = aligned.segments;
+            }
+          } catch (alignErr) {
+            console.warn("[align-speakers]", alignErr);
+          }
+        }
+      }
 
       const reviewEnabled = !!reviewMode?.checked;
       let srtFileName = `${baseName}_transcription.srt`;
