@@ -73,6 +73,13 @@ const GEMINI_OVERLAY_SMOOTHING_CONFIDENCE = Math.min(
   0.95,
   Math.max(0, Number(process.env.GEMINI_OVERLAY_SMOOTHING_CONFIDENCE || 0.4))
 );
+/** Seuil de confiance moyenne (overlap segment STT / segment ref) pour garder un locuteur rare ou discret sans le lisser. */
+const GEMINI_OVERLAY_MIN_SPEAKER_MEAN_CONF = Math.min(
+  1,
+  Math.max(0, Number(process.env.GEMINI_OVERLAY_MIN_SPEAKER_MEAN_CONF ?? 0.18))
+);
+/** Limite de tokens de sortie pour la transcription Gemini (JSON segments) — évite la coupure sur les fichiers longs. */
+const GEMINI_STT_MAX_OUTPUT_TOKENS = Math.max(2048, Number(process.env.GEMINI_STT_MAX_OUTPUT_TOKENS || 8192));
 const SUMMARY_CHUNK_TARGET_CHARS = Math.max(2000, Number(process.env.SUMMARY_CHUNK_TARGET_CHARS || 12000));
 const SUMMARY_MAX_CHUNKS = Math.max(2, Number(process.env.SUMMARY_MAX_CHUNKS || 24));
 function parseGroqCleanupHints() {
@@ -1292,7 +1299,7 @@ function applyGeminiSpeakerOverlay(baseSegments, geminiSegments) {
     const meanConf = (assignedConfidenceSum.get(spk) || 0) / Math.max(1, count);
     if (
       totalDur >= GEMINI_OVERLAY_MIN_SPEAKER_SEC ||
-      (count >= GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS && meanConf >= 0.22)
+      (count >= GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS && meanConf >= GEMINI_OVERLAY_MIN_SPEAKER_MEAN_CONF)
     ) {
       protectedSpeakers.add(spk);
     }
@@ -1313,25 +1320,39 @@ function applyGeminiSpeakerOverlay(baseSegments, geminiSegments) {
   return base.map((seg, i) => ({ ...seg, speaker: labels[i] || "SPEAKER_00" }));
 }
 
-async function transcribeWithGemini(filePath, apiKey, modelId) {
+async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
   const key = String(apiKey || "").trim();
   if (!key) throw new Error("Gemini STT requires API key (header x-gemini-api-key or GEMINI_API_KEY)");
   const model = String(modelId || GEMINI_MODEL).trim() || GEMINI_MODEL;
+  const speakerDiarizationPass = Boolean(options?.speakerDiarizationPass);
 
   const wavForGemini = await ensureWavForDiarization(filePath);
   let cleanupWav = wavForGemini.cleanup;
   try {
     const buf = await fs.readFile(wavForGemini.path);
     const b64 = buf.toString("base64");
-    const systemPrompt =
-      "Tu es un assistant de transcription audio professionnel.\n" +
-      "Transcris cet audio en français avec précision.\n" +
-      "Identifie les différents interlocuteurs (Speaker 1, Speaker 2, etc.).\n" +
-      "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
-      '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
-      "Les timestamps sont en secondes. Sois précis à 0.1 seconde près.";
-    const userHint =
-      "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre.";
+    const systemPrompt = speakerDiarizationPass
+      ? "Tu transcris l'intégralité de l'audio en français : chaque parole audible de chaque personne, " +
+        "y compris les longs monologues et les voix fortes ou proches du micro — rien ne doit être omis ni résumé.\n" +
+        "En parallèle, indique qui parle (Speaker 1, Speaker 2, etc.) : un nouveau segment à chaque changement de locuteur.\n" +
+        "Si une autre voix est clairement distincte mais plus faible ou brève, donne-lui un speaker séparé ; " +
+        "sans pour autant négliger ou raccourcir ce que disent les locuteurs principaux.\n" +
+        "Ne te focalise pas uniquement sur la voix la plus discrète : la transcription complète de tous les intervenants prime.\n" +
+        "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
+        '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
+        "Les timestamps sont en secondes. Sois précis à 0.1 seconde près."
+      : "Tu es un assistant de transcription audio professionnel.\n" +
+        "Transcris l'intégralité de l'audio en français, mot à mot pour chaque intervenant : " +
+        "tours de parole longs, voix dominantes et proches du micro inclus — ne saute aucun passage parlé substantiel.\n" +
+        "Identifie les interlocuteurs (Speaker 1, Speaker 2, etc.) et découpe un segment à chaque changement de locuteur.\n" +
+        "Lorsqu'une autre personne est audible avec un timbre distinct, même plus bas ou plus loin, attribue-lui un speaker séparé ; " +
+        "cela ne doit jamais se faire au prix d'omettre ou de minimiser ce que disent les autres.\n" +
+        "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
+        '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
+        "Les timestamps sont en secondes. Sois précis à 0.1 seconde près.";
+    const userHint = speakerDiarizationPass
+      ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement."
+      : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre.";
 
     const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
     const baseParts = [
@@ -1350,6 +1371,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId) {
         {
           temperature: 0.2,
           responseMimeType: "application/json",
+          maxOutputTokens: GEMINI_STT_MAX_OUTPUT_TOKENS,
         },
         model
       ),
@@ -1372,7 +1394,10 @@ async function transcribeWithGemini(filePath, apiKey, modelId) {
         const fallbackBody = {
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: baseParts }],
-          generationConfig: mergeGeminiGenerationConfig({ temperature: 0.2 }, model),
+          generationConfig: mergeGeminiGenerationConfig(
+            { temperature: 0.2, maxOutputTokens: GEMINI_STT_MAX_OUTPUT_TOKENS },
+            model
+          ),
         };
         res = await doFetch(fallbackBody);
       }
@@ -1493,6 +1518,8 @@ app.get("/health", (_req, res) => {
     geminiOverlayMinSpeakerSec: GEMINI_OVERLAY_MIN_SPEAKER_SEC,
     geminiOverlayMinSpeakerSegments: GEMINI_OVERLAY_MIN_SPEAKER_SEGMENTS,
     geminiOverlaySmoothingConfidence: GEMINI_OVERLAY_SMOOTHING_CONFIDENCE,
+    geminiOverlayMinSpeakerMeanConf: GEMINI_OVERLAY_MIN_SPEAKER_MEAN_CONF,
+    geminiSttMaxOutputTokens: GEMINI_STT_MAX_OUTPUT_TOKENS,
   });
 });
 
@@ -1526,9 +1553,11 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     }
 
     let geminiOverlaySegments = null;
-    if (STT_ENGINE !== "gemini" && GEMINI_DIARIZATION_OVERLAY && geminiKeyForReq) {
+    if (GEMINI_DIARIZATION_OVERLAY && geminiKeyForReq) {
       try {
-        geminiOverlaySegments = await transcribeWithGemini(uploadedPath, geminiKeyForReq, GEMINI_DIARIZATION_MODEL);
+        geminiOverlaySegments = await transcribeWithGemini(uploadedPath, geminiKeyForReq, GEMINI_DIARIZATION_MODEL, {
+          speakerDiarizationPass: true,
+        });
       } catch (err) {
         console.warn("[diarization] gemini-overlay:", String(err?.message || err));
       }
@@ -1539,8 +1568,13 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     let diarizationStrategy = "none";
     try {
       if (STT_ENGINE === "gemini") {
-        diarizedSegments = segments;
-        diarizationStrategy = "gemini-inline";
+        if (Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length) {
+          diarizedSegments = applyGeminiSpeakerOverlay(segments, geminiOverlaySegments);
+          diarizationStrategy = "gemini-inline+speaker-overlay";
+        } else {
+          diarizedSegments = segments;
+          diarizationStrategy = "gemini-inline";
+        }
       } else if (Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length) {
         diarizedSegments = applyGeminiSpeakerOverlay(segments, geminiOverlaySegments);
         diarizationStrategy = "gemini-speaker-overlay";
@@ -1597,7 +1631,9 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
       meta: {
         engine:
           STT_ENGINE === "gemini"
-            ? "gemini-audio+inline-diarization"
+            ? Array.isArray(geminiOverlaySegments) && geminiOverlaySegments.length
+              ? "gemini-audio+inline-diarization+overlay"
+              : "gemini-audio+inline-diarization"
             : STT_ENGINE === "groq"
               ? "groq-audio+diarization"
               : "whisper.cpp",
