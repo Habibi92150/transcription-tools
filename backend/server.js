@@ -57,6 +57,11 @@ const GEMINI_CLEANUP_TEMPERATURE = Number(process.env.GEMINI_CLEANUP_TEMPERATURE
 const GEMINI_DIARIZATION_OVERLAY = /^(1|true|yes|on)$/i.test(
   String(process.env.GEMINI_DIARIZATION_OVERLAY || "").trim()
 );
+const PREMIUM_PIN = String(process.env.PREMIUM_PIN || "").trim();
+const PREMIUM_SECRET = String(process.env.PREMIUM_SECRET || "").trim();
+if (!PREMIUM_PIN || !PREMIUM_SECRET) {
+  console.warn("[premium] PREMIUM_PIN ou PREMIUM_SECRET manquant dans .env");
+}
 const GEMINI_OVERLAY_MIN_SPEAKER_SEC = Math.max(
   0,
   Number(process.env.GEMINI_OVERLAY_MIN_SPEAKER_SEC || 0.7)
@@ -1437,6 +1442,23 @@ app.get("/health", (_req, res) => {
   });
 });
 
+function validatePremiumToken(token) {
+  if (!PREMIUM_SECRET || !token || typeof token !== "string") return false;
+  const dot = token.indexOf(".");
+  if (dot === -1) return false;
+  const expiresAt = Number(token.slice(0, dot));
+  const hmac = token.slice(dot + 1);
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
+  const payload = "premium:" + expiresAt;
+  const expected = crypto.createHmac("sha256", PREMIUM_SECRET).update(payload).digest("hex");
+  if (expected.length !== hmac.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(hmac, "hex"));
+  } catch {
+    return false;
+  }
+}
+
 app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
@@ -1444,6 +1466,9 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   }
 
   try {
+    const premiumToken = String(req.headers["x-premium-token"] || "").trim();
+    const isPremium = validatePremiumToken(premiumToken);
+    const runDiarization = isPremium || GEMINI_DIARIZATION_OVERLAY;
     const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
     const userGeminiHeader = String(req.headers["x-gemini-api-key"] || "").trim();
     const skipGemini = /^(1|true|yes|on)$/i.test(String(req.headers["x-skip-gemini"] || "").trim());
@@ -1467,7 +1492,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     }
 
     let geminiOverlaySegments = null;
-    if (GEMINI_DIARIZATION_OVERLAY && geminiKeyForReq) {
+    if (runDiarization && geminiKeyForReq) {
       try {
         geminiOverlaySegments = await transcribeWithGemini(uploadedPath, geminiKeyForReq, GEMINI_DIARIZATION_MODEL, {
           speakerDiarizationPass: true,
@@ -1691,6 +1716,22 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
 // Config publique pour le frontend
 app.get('/api/config', (_req, res) => {
   res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: '' });
+});
+
+app.post("/api/auth/premium", express.json(), (req, res) => {
+  if (!PREMIUM_PIN || !PREMIUM_SECRET) {
+    return res.status(503).json({ error: "Premium non configure sur ce serveur." });
+  }
+  const pin = String(req.body?.pin || "").trim();
+  if (!pin || pin !== PREMIUM_PIN) {
+    return res.status(401).json({ error: "PIN incorrect." });
+  }
+  const now = Date.now();
+  const expiresAt = now + 24 * 60 * 60 * 1000;
+  const payload = "premium:" + expiresAt;
+  const hmac = crypto.createHmac("sha256", PREMIUM_SECRET).update(payload).digest("hex");
+  const token = expiresAt + "." + hmac;
+  return res.json({ token, expiresAt });
 });
 
 app.listen(PORT, async () => {

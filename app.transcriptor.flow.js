@@ -1,13 +1,21 @@
-  /** Code PIN pour déverrouiller le bouton Premium (session uniquement). */
-  const PREMIUM_PIN = "2912";
-
   function isPremiumSessionUnlocked() {
-    return sessionStorage.getItem("premiumUnlocked") === "1";
+    try {
+      const token = sessionStorage.getItem("premiumToken");
+      const expiresAt = Number(sessionStorage.getItem("premiumTokenExpiry"));
+      if (!token || !Number.isFinite(expiresAt)) return false;
+      return Date.now() < expiresAt;
+    } catch {
+      return false;
+    }
   }
 
   function syncPremiumTierLockedClass() {
     if (tierPaidBtn) {
       tierPaidBtn.classList.toggle("tier-segment__btn--premium-locked", !isPremiumSessionUnlocked());
+    }
+    if (reviewMode) {
+      reviewMode.disabled = !isPremiumSessionUnlocked();
+      if (!isPremiumSessionUnlocked()) reviewMode.checked = false;
     }
   }
 
@@ -141,27 +149,72 @@
   const premiumPinGate = document.getElementById("premiumPinGate");
   const premiumPinForm = document.getElementById("premiumPinForm");
   if (premiumPinForm) {
-    premiumPinForm.addEventListener("submit", (e) => {
+    premiumPinForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("premiumPinInput");
       const errEl = document.getElementById("premiumPinError");
       const card = document.querySelector("#premiumPinGate .premium-pin-card");
-      const val = String(input?.value || "");
-      if (val === PREMIUM_PIN) {
-        sessionStorage.setItem("premiumUnlocked", "1");
-        if (tierPaidBtn) tierPaidBtn.classList.remove("tier-segment__btn--premium-locked");
-        closePremiumPin();
-        tierPaidBtn?.click();
-      } else {
-        if (card) {
-          card.classList.add("premium-pin-card--shake");
-          setTimeout(() => card.classList.remove("premium-pin-card--shake"), 400);
+      const submitBtn = premiumPinForm.querySelector("button[type=submit]");
+      const pin = String(input?.value || "").trim();
+      if (!pin) return;
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        let backendUrl = getBackendUrl().replace(/\/$/, "");
+        try {
+          const h = String(location.hostname || "");
+          const saved = String(localStorage.getItem(BACKEND_URL_STORAGE_KEY) || "").trim();
+          const localPage = !h || h === "localhost" || h === "127.0.0.1";
+          if (localPage && !saved) {
+            backendUrl = "http://127.0.0.1:8787";
+          }
+        } catch {
+          /* ignore */
         }
-        if (errEl) errEl.classList.remove("hidden");
-        if (input) {
-          input.value = "";
-          input.focus();
+        const res = await fetch(backendUrl + "/api/auth/premium", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.token && data.expiresAt) {
+          sessionStorage.setItem("premiumToken", data.token);
+          sessionStorage.setItem("premiumTokenExpiry", String(data.expiresAt));
+          if (tierPaidBtn) tierPaidBtn.classList.remove("tier-segment__btn--premium-locked");
+          syncPremiumTierLockedClass();
+          if (reviewMode) {
+            reviewMode.checked = true;
+            localStorage.setItem(REVIEW_MODE_STORAGE_KEY, "1");
+          }
+          closePremiumPin();
+          tierPaidBtn?.click();
+        } else {
+          if (card) {
+            card.classList.add("premium-pin-card--shake");
+            setTimeout(() => card.classList.remove("premium-pin-card--shake"), 400);
+          }
+          let errMsg = "PIN incorrect.";
+          if (typeof data?.error === "string" && data.error.trim()) {
+            errMsg = data.error.trim();
+          } else if (res.status === 503) {
+            errMsg = "Premium non configure sur ce serveur.";
+          }
+          if (errEl) {
+            errEl.textContent = errMsg;
+            errEl.classList.remove("hidden");
+          }
+          if (input) {
+            input.value = "";
+            input.focus();
+          }
         }
+      } catch {
+        if (errEl) {
+          errEl.textContent =
+            "Impossible de contacter le serveur. En local, lance le backend (port 8787) ou enregistre l’URL du serveur dans les reglages.";
+          errEl.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
       }
     });
   }
@@ -193,13 +246,54 @@
     resetUI();
   };
 
+  const instagramNewJobBtn = $("instagramNewJobBtn");
+  if (instagramNewJobBtn) {
+    instagramNewJobBtn.addEventListener("click", () => {
+      newTranscriptionBtn.click();
+    });
+  }
+
+  reviewList.addEventListener("focusout", (e) => {
+    if (!reviewState) return;
+    const target = e.target;
+    const field = target?.dataset?.field;
+    if (field !== "start" && field !== "end") return;
+    const idx = Number(target.dataset.idx);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= reviewState.editedSegments.length) return;
+    const seg = reviewState.editedSegments[idx];
+    const parsed = parseReviewTimecode(String(target.value || "").trim());
+    if (!Number.isFinite(parsed)) {
+      target.value = formatReviewTimecode(field === "start" ? seg.start : seg.end);
+      return;
+    }
+    if (field === "start") {
+      if (parsed >= seg.end) {
+        target.value = formatReviewTimecode(seg.start);
+        return;
+      }
+      seg.start = parsed;
+      target.value = formatReviewTimecode(seg.start);
+    } else {
+      if (parsed <= seg.start) {
+        target.value = formatReviewTimecode(seg.end);
+        return;
+      }
+      seg.end = parsed;
+      target.value = formatReviewTimecode(seg.end);
+    }
+  });
+
   reviewList.addEventListener("input", (e) => {
     if (!reviewState) return;
     const target = e.target;
     const idx = Number(target?.dataset?.idx);
     if (!Number.isFinite(idx) || idx < 0 || idx >= reviewState.editedSegments.length) return;
     if (target.dataset.field === "text") {
-      reviewState.editedSegments[idx].text = String(target.value || "");
+      const raw =
+        target.tagName === "TEXTAREA"
+          ? String(target.value || "")
+          : String(target.textContent || "").replace(/\u00a0/g, " ");
+      reviewState.editedSegments[idx].text = raw;
     } else if (target.dataset.field === "speaker") {
       reviewState.editedSegments[idx].speaker = String(target.value || "");
       const row = target.closest(".review-row");
@@ -237,6 +331,10 @@
   }
   if (reviewWordingGenerateBtn) {
     reviewWordingGenerateBtn.addEventListener("click", () => {
+      if (!isPremiumSessionUnlocked()) {
+        showToast("Cette fonctionnalite est reservee au tier Premium.");
+        return;
+      }
       generateWordingsFromExcerpt();
     });
   }
@@ -288,10 +386,59 @@
     const fileName = `${reviewState.baseName}_transcription_corrigee.srt`;
     download(content, fileName);
     exportMeta.textContent = `${fileName} · ${safeSegments.length} segments`;
-    reviewPanel.hidden = true;
-    exportPanel.hidden = false;
-    sr("SRT corrigé téléchargé.");
+    if (isPremiumSessionUnlocked()) {
+      showInstagramWordingAfterPremiumExport();
+      sr("SRT corrigé téléchargé. Génération des légendes Instagram…");
+    } else {
+      reviewPanel.hidden = true;
+      exportPanel.hidden = false;
+      sr("SRT corrigé téléchargé.");
+    }
   };
+
+  if (reviewCancelBtn) {
+    reviewCancelBtn.onclick = () => {
+      cleanupReviewMedia();
+      if (instagramWordingPanel) {
+        instagramWordingPanel.hidden = true;
+        if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
+        if (instagramWordingError) {
+          instagramWordingError.textContent = "";
+          instagramWordingError.classList.add("hidden");
+        }
+        if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
+      }
+      reviewPanel.hidden = true;
+      uploadPanel.hidden = false;
+      actionRow.hidden = false;
+      exportPanel.hidden = true;
+      progressPanel.hidden = true;
+      sr("Relecture annulée.");
+      refreshRunButton();
+    };
+  }
+
+  if (instagramWordingGrid) {
+    instagramWordingGrid.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-copy-instagram]");
+      if (!btn) return;
+      const idx = Number(btn.dataset.copyInstagram);
+      const card = instagramWordingGrid.querySelector(`[data-ig-cap-idx="${idx}"]`);
+      const textEl = card?.querySelector(".instagram-caption-text");
+      const text = textEl?.textContent?.trim() || "";
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        const prev = btn.textContent;
+        btn.textContent = "Copié ✓";
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 2000);
+      } catch {
+        showToast("Impossible de copier automatiquement.");
+      }
+    });
+  }
 
   // ========= Navigation =========
   function setActivePage(page) {
@@ -319,11 +466,11 @@
 
   // ========= Run =========
   runBtn.onclick = async () => {
+    syncPremiumKeyOnBlur();
     const apiKey = apiKeyInput.value.trim();
     const localBackendMode = isLocalModeEnabled();
     const backendUrl = getBackendUrl();
     if (!selectedFile) return;
-    if (!localBackendMode && !apiKey) return;
 
     runBtn.disabled = true;
     if (pickBtn) pickBtn.disabled = true;
@@ -399,6 +546,10 @@
       }
 
       const backendHeaders = { "x-groq-api-key": apiKey || "" };
+      const premiumToken = sessionStorage.getItem("premiumToken");
+      if (premiumToken && isPremiumSessionUnlocked()) {
+        backendHeaders["x-premium-token"] = premiumToken;
+      }
       const gk = geminiApiKeyInput?.value.trim();
       if (gk) backendHeaders["x-gemini-api-key"] = gk;
       else if (!localBackendMode) backendHeaders["x-skip-gemini"] = "1";
@@ -453,10 +604,10 @@
       // Mode Gratuit (Groq dans le navigateur) : pas de diarisation ni align-speakers.
       // Les locuteurs ne sont pas détectés ; le Premium reste sur /api/transcribe (backend) inchangé.
 
-      const reviewEnabled = !!reviewMode?.checked;
+      const reviewEnabled = !!reviewMode?.checked && isPremiumSessionUnlocked();
       let srtFileName = `${baseName}_transcription.srt`;
       if (reviewEnabled) {
-        prepareReviewPanel(baseName, segments, selectedFile);
+        prepareReviewPanel(baseName, segments, selectedFile, localBackendMode ? "backend" : "cloud-premium");
       } else {
         const srtContent = buildSrtFromSegments(segments);
         download(srtContent, srtFileName);

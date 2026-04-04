@@ -6,6 +6,9 @@
   const runBtn = $("runBtn");
   const fileInput = $("fileInput");
   const apiKeyInput = $("apiKeyInput");
+  const apiKeyFieldWrap = $("apiKeyFieldWrap");
+  const premiumKeyInput = $("premiumKeyInput");
+  const premiumKeyFieldWrap = $("premiumKeyFieldWrap");
   const localMode = $("localMode");
   const tierFreeBtn = $("tierFreeBtn");
   const tierPaidBtn = $("tierPaidBtn");
@@ -32,6 +35,7 @@
   const exportMeta = $("exportMeta");
   const srStatus = $("sr-status");
   const reviewMode = $("reviewMode");
+  const reviewModeRow = $("reviewModeRow");
   const reviewPanel = $("review-panel");
   const reviewPlayer = $("reviewPlayer");
   const reviewAudioPlayer = $("reviewAudioPlayer");
@@ -46,8 +50,15 @@
   const reviewList = $("reviewList");
   const reviewMeta = $("reviewMeta");
   const reviewDownloadBtn = $("reviewDownloadBtn");
+  const reviewCancelBtn = $("reviewCancelBtn");
   const reviewResetBtn = $("reviewResetBtn");
   const reviewCaptureBtn = $("reviewCaptureBtn");
+  const reviewListHead = $("reviewListHead");
+  const instagramWordingPanel = $("instagram-wording-panel");
+  const instagramWordingGrid = $("instagramWordingGrid");
+  const instagramWordingError = $("instagramWordingError");
+  const instagramWordingRetryWrap = $("instagramWordingRetryWrap");
+  const instagramWordingRetryBtn = $("instagramWordingRetryBtn");
   const reviewWordingGenerateBtn = $("reviewWordingGenerateBtn");
   const reviewWordingSource = $("reviewWordingSource");
   const reviewWordingStatus = $("reviewWordingStatus");
@@ -88,6 +99,8 @@
   const appPinError = $("appPinError");
 
   const API_KEY_STORAGE_KEY = "groq_api_key_transcription";
+  const PREMIUM_KEY = "CREATOR8";
+  const PREMIUM_KEY_STORAGE = "smm_premium_key";
   const GEMINI_KEY_STORAGE = "transcriptor_gemini_key";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
   const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
@@ -454,3 +467,16 @@
     LOCKED: "Accès verrouillé. Saisis le code PIN.",
     GENERIC: "Quelque chose s'est mal passé. Actualise la page et réessaie.",
   };
+
+  function syncPremiumKeyOnBlur() {
+    if (!premiumKeyInput) return;
+    const typed = String(premiumKeyInput.value || "").trim();
+    if (typed === PREMIUM_KEY) localStorage.setItem(PREMIUM_KEY_STORAGE, typed);
+    else localStorage.removeItem(PREMIUM_KEY_STORAGE);
+  }
+
+  function isContentPremium() {
+    const typed = String(premiumKeyInput?.value || "").trim();
+    if (typed === PREMIUM_KEY) return true;
+    return localStorage.getItem(PREMIUM_KEY_STORAGE) === PREMIUM_KEY;
+  }

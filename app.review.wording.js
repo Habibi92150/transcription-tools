@@ -270,22 +270,54 @@
     if (reviewWordingSource && excerpt?.source) reviewWordingSource.textContent = excerpt.source;
   }
 
+  function setReviewListHeader() {
+    if (!reviewListHead || !reviewState) return;
+    const compact = reviewState.reviewFlow === "cloud-premium";
+    reviewListHead.classList.toggle("review-list-head--cloud", compact);
+    if (compact) {
+      reviewListHead.innerHTML =
+        '<span class="review-h-num">#</span><span>Début</span><span>Fin</span><span>Texte</span><span>Sync</span>';
+    } else {
+      reviewListHead.innerHTML =
+        '<span>Start</span><span>End</span><span>Speaker</span><span>Texte</span><span>Sync</span>';
+    }
+  }
+
   function renderReviewList() {
     if (!reviewState || !Array.isArray(reviewState.editedSegments)) {
       reviewList.innerHTML = "";
       return;
     }
+    setReviewListHeader();
+    const compact = reviewState.reviewFlow === "cloud-premium";
     const rows = reviewState.editedSegments
       .map((seg, idx) => {
         const speaker = String(seg?.speaker || "");
         const text = String(seg?.text || "");
         const rgb = speakerColorRgb(speaker);
+        if (compact) {
+          return `
+          <div class="review-row review-row--cloud-premium" data-idx="${idx}" style="--speaker-rgb:${rgb}">
+            <span class="review-num" aria-hidden="true">${idx + 1}</span>
+            <input type="text" class="review-time-input" data-field="start" data-idx="${idx}" value="${formatReviewTimecode(
+            seg.start
+          )}" aria-label="Début segment ${idx + 1}" />
+            <input type="text" class="review-time-input" data-field="end" data-idx="${idx}" value="${formatReviewTimecode(
+            seg.end
+          )}" aria-label="Fin segment ${idx + 1}" />
+            <div class="review-text review-text--editable" contenteditable="true" spellcheck="true" data-field="text" data-idx="${idx}" tabindex="0">${escapeHtml(
+              text
+            )}</div>
+            <button type="button" class="review-jump" data-jump="${idx}" title="Aller au segment">▶</button>
+          </div>
+        `;
+        }
         return `
           <div class="review-row" data-idx="${idx}" style="--speaker-rgb:${rgb}">
             <div class="review-time">${formatReviewTime(seg.start)}</div>
             <div class="review-time">${formatReviewTime(seg.end)}</div>
             <input class="review-speaker" data-field="speaker" data-idx="${idx}" value="${speaker.replace(/"/g, "&quot;")}" placeholder="SPEAKER_00" />
-            <textarea class="review-text" data-field="text" data-idx="${idx}">${text}</textarea>
+            <textarea class="review-text" data-field="text" data-idx="${idx}">${escapeHtml(text)}</textarea>
             <button type="button" class="review-jump" data-jump="${idx}" title="Aller au segment">▶</button>
           </div>
         `;
@@ -295,20 +327,34 @@
     setReviewActiveIndex(reviewActiveIndex);
   }
 
+  function hideInstagramWordingPanelUi() {
+    if (instagramWordingPanel) instagramWordingPanel.hidden = true;
+    if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
+    if (instagramWordingError) {
+      instagramWordingError.textContent = "";
+      instagramWordingError.classList.add("hidden");
+    }
+    if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
+  }
+
   /** Prépare l’éditeur (données + média) sans changer les panneaux — la progression reste visible. */
-  function prepareReviewPanel(baseName, segments, originalFile) {
+  function prepareReviewPanel(baseName, segments, originalFile, reviewFlow) {
     cleanupReviewMedia();
+    hideInstagramWordingPanelUi();
+    const flowKind = reviewFlow === "cloud-premium" ? "cloud-premium" : "backend";
+    if (reviewPanel) reviewPanel.dataset.flow = flowKind;
     reviewState = {
       baseName,
       originalSegments: cloneSegmentsForReview(segments),
       editedSegments: cloneSegmentsForReview(segments),
+      reviewFlow: flowKind,
     };
     reviewMeta.textContent = `${baseName}_transcription_corrigee.srt`;
     if (reviewOverlayToggle) reviewOverlayToggle.checked = true;
     if (reviewPanelToggle) reviewPanelToggle.checked = true;
 
     if (originalFile) {
-      const isVideo = (originalFile.type || "").startsWith("video/") || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(originalFile.name || "");
+      const isVideo = isVideoFile(originalFile);
       const isAudio = (originalFile.type || "").startsWith("audio/");
       if (isVideo || isAudio) {
         reviewMediaUrl = URL.createObjectURL(originalFile);
@@ -339,4 +385,203 @@
     reviewPanel.hidden = false;
     actionRow.hidden = true;
     sr("Relecture prête. Corrige les segments puis exporte le .srt.");
+  }
+
+  let instagramCaptionState = { loading: false, items: [], error: false };
+
+  function buildInstagramCaptionWordExtractFromSegments(segments) {
+    const fullText = (Array.isArray(segments) ? segments : [])
+      .map((s) => String(s?.text || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const words = fullText ? fullText.split(/\s+/) : [];
+    const n = words.length;
+    if (n <= 600) return fullText;
+    const take = 300;
+    const head = words.slice(0, take).join(" ");
+    const midStart = Math.floor((n - take) / 2);
+    const mid = words.slice(midStart, midStart + take).join(" ");
+    const tail = words.slice(-take).join(" ");
+    return `${head}\n\n[…]\n\n${mid}\n\n[…]\n\n${tail}`;
+  }
+
+  const INSTAGRAM_CAPTION_MODEL_PRIMARY = "llama3-70b-8192";
+  const INSTAGRAM_CAPTION_MODEL_FALLBACK = "llama-3.3-70b-versatile";
+  const INSTAGRAM_TONE_ORDER = ["informatif", "storytelling", "engagé", "inspirant", "humour"];
+
+  function normalizeInstagramCaptionsPayload(parsed) {
+    let arr = Array.isArray(parsed) ? parsed : null;
+    if (!arr && parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed.captions)) arr = parsed.captions;
+      else if (Array.isArray(parsed.items)) arr = parsed.items;
+    }
+    if (!arr?.length) return [];
+    return arr
+      .slice(0, 5)
+      .map((item, i) => ({
+        tone: String(item?.tone || INSTAGRAM_TONE_ORDER[i] || `Style ${i + 1}`).trim(),
+        caption: String(item?.caption || "").trim(),
+      }))
+      .filter((x) => x.caption.length > 0);
+  }
+
+  function renderInstagramWordingSkeleton() {
+    if (!instagramWordingGrid) return;
+    instagramWordingGrid.innerHTML = [0, 1, 2, 3, 4]
+      .map(
+        () => `
+      <article class="instagram-caption-card instagram-caption-card--skeleton" aria-busy="true">
+        <div class="instagram-skel-badge"></div>
+        <div class="instagram-skel-line"></div>
+        <div class="instagram-skel-line instagram-skel-line--short"></div>
+        <div class="instagram-skel-btn"></div>
+      </article>`
+      )
+      .join("");
+  }
+
+  function renderInstagramCaptionResults() {
+    if (!instagramWordingGrid) return;
+    if (instagramCaptionState.loading) {
+      renderInstagramWordingSkeleton();
+      return;
+    }
+    if (instagramCaptionState.error) {
+      return;
+    }
+    if (!instagramCaptionState.items.length) {
+      instagramWordingGrid.innerHTML = "";
+      return;
+    }
+    instagramWordingGrid.innerHTML = instagramCaptionState.items
+      .map(
+        (item, i) => `
+      <article class="instagram-caption-card" data-ig-cap-idx="${i}">
+        <div class="instagram-caption-card-head">
+          <span class="instagram-tone-badge">${escapeHtml(item.tone)}</span>
+          <button type="button" class="btn btn-ghost instagram-copy-btn" data-copy-instagram="${i}">Copier</button>
+        </div>
+        <p class="instagram-caption-text">${escapeHtml(item.caption)}</p>
+      </article>`
+      )
+      .join("");
+  }
+
+  async function fetchInstagramCaptionsWithModel(model, apiKey, extract) {
+    const systemPrompt =
+      "Tu es un expert en social media. Tu génères des légendes Instagram percutantes en français.";
+    const userPrompt = `Voici la transcription d'une vidéo : ${extract}\n\nGénère 5 légendes Instagram en français, chacune avec un ton différent parmi : informatif, storytelling, engagé, inspirant, humour. Format de réponse JSON : [{\"tone\": \"...\", \"caption\": \"...\"}]`;
+    const res = await fetch(GROQ_CHAT_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.75,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    return res;
+  }
+
+  async function runInstagramCaptionsFromEditedSegments() {
+    const apiKey = String(apiKeyInput?.value || "").trim();
+    if (!instagramWordingPanel || !instagramWordingGrid) return;
+    const safeSegments = (reviewState?.editedSegments || [])
+      .map((seg) => ({ ...seg, text: String(seg.text || "").trim() }))
+      .filter((seg) => seg.text.length > 0);
+    const extract = buildInstagramCaptionWordExtractFromSegments(safeSegments);
+
+    const showKeyError = () => {
+      instagramCaptionState.loading = false;
+      instagramCaptionState.error = true;
+      instagramCaptionState.items = [];
+      if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
+      if (instagramWordingError) {
+        instagramWordingError.textContent =
+          "Impossible de générer les légendes — vérifie ta clé d'accès.";
+        instagramWordingError.classList.remove("hidden");
+      }
+      if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.remove("hidden");
+      renderInstagramCaptionResults();
+    };
+
+    if (!extract || !apiKey) {
+      showKeyError();
+      return;
+    }
+
+    instagramCaptionState.loading = true;
+    instagramCaptionState.error = false;
+    instagramCaptionState.items = [];
+    if (instagramWordingError) {
+      instagramWordingError.classList.add("hidden");
+      instagramWordingError.textContent = "";
+    }
+    if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
+    instagramWordingPanel.hidden = false;
+    renderInstagramCaptionResults();
+
+    const tryModel = async (model) => {
+      const res = await fetchInstagramCaptionsWithModel(model, apiKey, extract);
+      if (!res.ok) throw new Error("HTTP");
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseJsonLoose(content);
+      return normalizeInstagramCaptionsPayload(parsed);
+    };
+
+    try {
+      let norm = [];
+      try {
+        norm = await tryModel(INSTAGRAM_CAPTION_MODEL_PRIMARY);
+      } catch {
+        norm = [];
+      }
+      if (!norm.length) {
+        try {
+          norm = await tryModel(INSTAGRAM_CAPTION_MODEL_FALLBACK);
+        } catch {
+          norm = [];
+        }
+      }
+      if (!norm.length) throw new Error("EMPTY");
+      while (norm.length < 5) {
+        const idx = norm.length;
+        norm.push({
+          tone: INSTAGRAM_TONE_ORDER[idx] || `Style ${idx + 1}`,
+          caption: "Légende indisponible pour ce ton.",
+        });
+      }
+      instagramCaptionState.items = norm.slice(0, 5);
+      instagramCaptionState.error = false;
+    } catch {
+      showKeyError();
+    } finally {
+      instagramCaptionState.loading = false;
+      renderInstagramCaptionResults();
+    }
+  }
+
+  function showInstagramWordingAfterPremiumExport() {
+    if (!instagramWordingPanel) return;
+    instagramCaptionState = { loading: false, items: [], error: false };
+    instagramWordingPanel.hidden = false;
+    if (instagramWordingError) {
+      instagramWordingError.classList.add("hidden");
+      instagramWordingError.textContent = "";
+    }
+    if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
+    runInstagramCaptionsFromEditedSegments();
+  }
+
+  if (instagramWordingRetryBtn) {
+    instagramWordingRetryBtn.addEventListener("click", () => runInstagramCaptionsFromEditedSegments());
   }
