@@ -25,6 +25,29 @@
     return `${String(m).padStart(2, "0")}:${r}`;
   }
 
+  function formatReviewTimecode(sec) {
+    const s = Math.max(0, Number(sec) || 0);
+    const whole = Math.floor(s);
+    const ms = Math.min(999, Math.round((s - whole) * 1000));
+    const m = Math.floor(whole / 60);
+    const r = whole % 60;
+    return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+  }
+
+  function parseReviewTimecode(str) {
+    const t = String(str || "").trim();
+    const m = t.match(/^(\d{1,4}):(\d{2})\.(\d{1,3})$/);
+    if (!m) return NaN;
+    const min = Number(m[1]);
+    const sec = Number(m[2]);
+    let frac = m[3];
+    if (frac.length === 1) frac = `${frac}00`;
+    else if (frac.length === 2) frac = `${frac}0`;
+    const ms = Number(frac.slice(0, 3));
+    if (!Number.isFinite(min) || sec >= 60 || sec < 0 || ms > 999) return NaN;
+    return min * 60 + sec + ms / 1000;
+  }
+
   function previewLineFromSegment(seg) {
     if (!seg) return { speaker: "", text: "" };
     const speaker = normalizeSpeaker(seg.speaker) || "";

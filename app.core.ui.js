@@ -67,6 +67,15 @@
     setEta(ETA_TRANSCRIBE);
     stopRemainTimer();
     cleanupReviewMedia();
+    if (instagramWordingPanel) {
+      instagramWordingPanel.hidden = true;
+      if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
+      if (instagramWordingError) {
+        instagramWordingError.textContent = "";
+        instagramWordingError.classList.add("hidden");
+      }
+      if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
+    }
     refreshRunButton();
   }
 
@@ -158,7 +167,31 @@
     return raw || DEFAULT_BACKEND_URL;
   };
 
+  function syncReviewModeRowVisibility() {
+    if (!reviewModeRow) return;
+    const local = isLocalModeEnabled();
+    reviewModeRow.classList.toggle("hidden", !local);
+    reviewModeRow.setAttribute("aria-hidden", local ? "false" : "true");
+  }
+
+  function syncUploadKeyFields() {
+    const showApiKey = isLocalModeEnabled();
+    if (apiKeyFieldWrap) {
+      apiKeyFieldWrap.classList.toggle("hidden", !showApiKey);
+      apiKeyFieldWrap.setAttribute("aria-hidden", showApiKey ? "false" : "true");
+    }
+    if (premiumKeyFieldWrap) {
+      const show = !!selectedFile && !isLocalModeEnabled();
+      premiumKeyFieldWrap.classList.toggle("hidden", !show);
+      premiumKeyFieldWrap.setAttribute("aria-hidden", show ? "false" : "true");
+    }
+  }
+
   function syncModeUi() {
+    syncReviewModeRowVisibility();
+    syncUploadKeyFields();
+    const apiKeyField = apiKeyInput?.closest(".field") || apiKeyInput?.parentElement;
+    if (apiKeyField) apiKeyField.style.display = "none";
     if (!localMode || !apiKeyInput) return;
     const local = isLocalModeEnabled();
     if (backendUrlRow) backendUrlRow.classList.remove("hidden");
@@ -172,9 +205,7 @@
   }
 
   function refreshRunButton() {
-    const hasGroqCred = !!apiKeyInput.value.trim();
-    const hasBackendCred = !!getBackendUrl();
-    const ok = !!selectedFile && (isLocalModeEnabled() ? hasBackendCred : hasGroqCred);
+    const ok = !!selectedFile;
     runBtn.disabled = !ok;
     runBtn.setAttribute("aria-disabled", String(!ok));
   }
@@ -192,6 +223,7 @@
       dzFileMeta.textContent = "";
     }
     syncExtractUi(selectedFile);
+    syncUploadKeyFields();
     refreshRunButton();
   }
 

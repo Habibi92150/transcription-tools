@@ -362,7 +362,7 @@
             </div>
 
             <div class="review-list-wrap">
-              <div class="review-list-head">
+              <div class="review-list-head" id="reviewListHead">
                 <span>Start</span>
                 <span>End</span>
                 <span>Speaker</span>
@@ -373,6 +373,7 @@
             </div>
 
             <div class="review-actions">
+              <button class="btn btn-ghost" id="reviewCancelBtn" type="button">Annuler</button>
               <button class="btn btn-ghost" id="reviewCaptureBtn" type="button">Capturer une image</button>
               <button class="btn btn-ghost" id="reviewResetBtn" type="button">Reset corrections</button>
               <button class="btn btn-primary" id="reviewDownloadBtn" type="button">Télécharger .srt corrigé</button>
@@ -410,6 +411,18 @@
               </div>
             </div>
           </aside>
+        </div>
+      </section>
+
+      <section id="instagram-wording-panel" class="panel instagram-wording-panel" hidden aria-label="Légendes Instagram">
+        <h2 class="instagram-wording-title">Légendes Instagram</h2>
+        <div id="instagramWordingError" class="instagram-wording-error hidden" role="alert"></div>
+        <div id="instagramWordingRetryWrap" class="instagram-wording-retry-wrap hidden">
+          <button type="button" class="btn btn-ghost" id="instagramWordingRetryBtn">Réessayer</button>
+        </div>
+        <div id="instagramWordingGrid" class="instagram-wording-grid" aria-live="polite"></div>
+        <div class="instagram-wording-footer">
+          <button type="button" class="btn btn-ghost" id="instagramNewJobBtn">Nouvelle transcription</button>
         </div>
       </section>
 
