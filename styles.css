@@ -640,15 +640,183 @@ body.app-locked .app-shell {
   background: var(--color-cta-hover);
   color: #222831;
 }
+
+/* Gratuit / Premium : segmented control sobre (aligné charte taupe + slate) */
+.tier-segment--hero {
+  padding: 5px;
+  gap: 5px;
+  border-radius: calc(var(--radius-md) + 1px);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.2);
+}
+
+.tier-segment--hero .tier-segment__btn {
+  min-height: 42px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: calc(var(--radius-md) - 2px);
+  color: var(--text-muted);
+  background: transparent;
+  transition:
+    background 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 220ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.tier-segment--hero .tier-segment__btn:hover:not(.tier-segment__btn--active) {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tier-segment--hero .tier-segment__btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Premium : brillance — animation en background-position (évite la couture verticale du translate + dégradé) */
+.tier-segment--hero .tier-segment__btn--premium {
+  position: relative;
+  overflow: hidden;
+}
+.tier-segment--hero .tier-segment__btn--premium::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* Dégradé large + fond jamais totalement vide → pas de ligne nette au milieu */
+  background-image: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0.035) 0%,
+    rgba(255, 255, 255, 0.05) 22%,
+    rgba(255, 255, 255, 0.09) 42%,
+    rgba(255, 255, 255, 0.06) 52%,
+    rgba(255, 255, 255, 0.045) 72%,
+    rgba(255, 255, 255, 0.035) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 0% 50%;
+  background-repeat: no-repeat;
+  opacity: 0.95;
+  pointer-events: none;
+  animation: tier-premium-gloss 7s cubic-bezier(0.45, 0.05, 0.22, 1) infinite;
+}
+@keyframes tier-premium-gloss {
+  0%,
+  24% {
+    background-position: 5% 50%;
+  }
+  42% {
+    background-position: 95% 50%;
+  }
+  58%,
+  100% {
+    background-position: 95% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tier-segment--hero .tier-segment__btn--premium::before {
+    animation: none;
+    background-size: 100% 100%;
+    background-position: 50% 50%;
+    background-image: linear-gradient(
+      168deg,
+      rgba(255, 255, 255, 0.07) 0%,
+      rgba(255, 255, 255, 0.04) 45%,
+      rgba(255, 255, 255, 0.06) 100%
+    );
+  }
+  .tier-segment--hero .tier-segment__btn--premium.tier-segment__btn--active::before {
+    background-image: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0.06) 48%,
+      rgba(255, 255, 255, 0.1) 100%
+    );
+  }
+}
+
+/* Gratuit sélectionné : CTA taupe existante */
+.tier-segment--hero .tier-segment__btn--free.tier-segment__btn--active {
+  color: #222831;
+  background: var(--color-cta);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.tier-segment--hero .tier-segment__btn--free.tier-segment__btn--active:hover {
+  color: #222831;
+  background: var(--color-cta-hover);
+}
+
+/* Premium sélectionné : accent slate + brillance un peu plus présente */
+.tier-segment--hero .tier-segment__btn--premium.tier-segment__btn--active {
+  color: var(--text-primary);
+  background: linear-gradient(
+    180deg,
+    rgba(102, 128, 145, 0.5) 0%,
+    rgba(86, 112, 132, 0.4) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(120, 148, 168, 0.38),
+    0 1px 5px rgba(0, 0, 0, 0.16),
+    0 0 14px rgba(94, 122, 138, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+}
+.tier-segment--hero .tier-segment__btn--premium.tier-segment__btn--active::before {
+  opacity: 1;
+  background-image: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.18) 44%,
+    rgba(255, 255, 255, 0.12) 54%,
+    rgba(255, 255, 255, 0.08) 75%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  background-size: 260% 100%;
+  animation-duration: 4.8s;
+  animation-timing-function: cubic-bezier(0.42, 0, 0.2, 1);
+}
+.tier-segment--hero .tier-segment__btn--premium.tier-segment__btn--active:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(112, 138, 158, 0.55) 0%,
+    rgba(96, 122, 142, 0.48) 100%
+  );
+  color: var(--text-primary);
+  box-shadow:
+    0 0 0 1px rgba(138, 168, 188, 0.48),
+    0 2px 8px rgba(0, 0, 0, 0.18),
+    0 0 18px rgba(94, 122, 138, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+}
+
 .tier-mode-hint {
   margin: 10px 0 0 0;
 }
 .tier-mode-hint strong { color: var(--text-secondary); font-weight: 600; }
 
+.tier-mode-bar {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tier-mode-bar .tier-segment--hero {
+  max-width: none;
+  width: 100%;
+}
+
 /* Action row */
 .action-row {
   display: grid; grid-template-columns: auto 1fr;
   gap: 12px; margin-top: 16px; align-items: center;
+}
+.action-row--primary-only {
+  grid-template-columns: 1fr;
 }
 
 /* Buttons */

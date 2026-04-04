@@ -60,7 +60,7 @@
     reviewPanel.hidden = true;
     uploadPanel.hidden = false;
     actionRow.hidden = false;
-    pickBtn.disabled = false;
+    if (pickBtn) pickBtn.disabled = false;
     extractAudio.disabled = false;
     resetStepper();
     setProgress(0);
@@ -160,10 +160,9 @@
   };
 
   function syncModeUi() {
-    if (!localMode || !backendUrlRow || !apiKeyInput) return;
+    if (!localMode || !apiKeyInput) return;
     const local = isLocalModeEnabled();
-    backendUrlRow.classList.remove("hidden");
-    apiKeyInput.closest(".field")?.classList.toggle("hidden", local);
+    if (backendUrlRow) backendUrlRow.classList.remove("hidden");
     if (geminiKeyField) geminiKeyField.classList.toggle("hidden", !local);
     if (tierFreeBtn && tierPaidBtn) {
       tierFreeBtn.classList.toggle("tier-segment__btn--active", !local);
@@ -250,6 +249,24 @@
   }
 
   // ========= API =========
+  /** Une seule fois quand le corps de la requête est envoyé (progress 100 %, upload.onload, ou repli xhr.onload). */
+  function wireXhrUploadComplete(xhr, onProgress, onComplete) {
+    let notified = false;
+    function notifyOnce() {
+      if (notified) return;
+      notified = true;
+      onComplete?.();
+    }
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) {
+        onProgress?.(e.loaded / e.total);
+        if (e.loaded >= e.total) notifyOnce();
+      }
+    };
+    xhr.upload.onload = () => notifyOnce();
+    return notifyOnce;
+  }
+
   function postTranscription(url, apiKey, formData, onProgress, onComplete) {
     return new Promise((resolve, reject) => {
       if (!appUnlocked) {
@@ -259,11 +276,9 @@
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.setRequestHeader("Authorization", `Bearer ${apiKey}`);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress?.(e.loaded / e.total);
-      };
-      xhr.upload.onload = () => onComplete?.();
+      const notifyUploadDone = wireXhrUploadComplete(xhr, onProgress, onComplete);
       xhr.onload = () => {
+        notifyUploadDone();
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             resolve(JSON.parse(xhr.responseText || "{}"));
@@ -290,11 +305,9 @@
       for (const [k, v] of Object.entries(extraHeaders || {})) {
         if (v) xhr.setRequestHeader(k, String(v));
       }
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress?.(e.loaded / e.total);
-      };
-      xhr.upload.onload = () => onComplete?.();
+      const notifyUploadDone = wireXhrUploadComplete(xhr, onProgress, onComplete);
       xhr.onload = () => {
+        notifyUploadDone();
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             resolve(JSON.parse(xhr.responseText || "{}"));
