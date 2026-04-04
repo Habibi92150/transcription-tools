@@ -3,7 +3,7 @@
     localStorage.setItem(EXTRACT_AUDIO_PREF_KEY, extractAudio.checked ? "1" : "0");
   });
 
-  pickBtn.onclick = () => fileInput.click();
+  if (pickBtn) pickBtn.onclick = () => fileInput.click();
   changeFileBtn.onclick = (e) => {
     e.stopPropagation();
     fileInput.click();
@@ -239,7 +239,7 @@
     if (!localBackendMode && !apiKey) return;
 
     runBtn.disabled = true;
-    pickBtn.disabled = true;
+    if (pickBtn) pickBtn.disabled = true;
     extractAudio.disabled = true;
     actionRow.hidden = true;
     uploadPanel.hidden = true;
@@ -427,7 +427,7 @@
         resetUI();
       }, 1500);
     } finally {
-      pickBtn.disabled = false;
+      if (pickBtn) pickBtn.disabled = false;
       extractAudio.disabled = false;
       refreshRunButton();
     }

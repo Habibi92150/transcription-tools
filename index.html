@@ -218,56 +218,42 @@
           </div>
         </div>
 
-        <div class="field">
+        <div id="apiKeyFieldWrap" class="field hidden" aria-hidden="true">
           <label class="field-label" for="apiKeyInput">Accès équipe</label>
           <input id="apiKeyInput" class="field-input" type="password" autocomplete="off" placeholder="Saisir la clé d'accès équipe…" />
         </div>
 
-        <details class="settings-disclosure">
-          <summary class="settings-disclosure-summary"><span class="settings-disclosure-icon" aria-hidden="true">⚙️</span> Paramètres</summary>
-          <div class="settings-disclosure-body">
-            <div id="localModeRow" class="option-row">
-              <span class="field-label tier-mode-label" id="tierModeLabel">Mode transcription</span>
-              <div class="tier-segment" role="group" aria-labelledby="tierModeLabel">
-                <button type="button" id="tierFreeBtn" class="tier-segment__btn tier-segment__btn--active" aria-pressed="true">
+        <div id="tierModeBar" class="tier-mode-bar">
+          <span class="field-label tier-mode-label" id="tierModeLabel">Mode</span>
+          <div class="tier-segment tier-segment--hero" role="group" aria-labelledby="tierModeLabel">
+                <button type="button" id="tierFreeBtn" class="tier-segment__btn tier-segment__btn--free tier-segment__btn--active" aria-pressed="true">
                   Gratuit
                 </button>
-                <button type="button" id="tierPaidBtn" class="tier-segment__btn" aria-pressed="false">
-                  Premium
-                </button>
-              </div>
-              <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
-              <p class="option-hint tier-mode-hint">
-                <strong>Gratuit</strong> : envoi à Groq avec l’accès équipe. <strong>Premium</strong> : audio vers ton backend Node (<code>/api/transcribe</code>), STT local ou Gemini selon configuration.
-              </p>
-            </div>
-
-            <div id="backendUrlRow" class="field">
-              <label class="field-label" for="backendUrlInput">URL backend (diarisation)</label>
-              <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
-              <p class="option-hint">En mode <strong>Gratuit</strong> : Groq transcrit dans le navigateur ; cette URL sert à l’alignement des interlocuteurs (Pyannote ou diarisation locale selon le <code>.env</code>). En <strong>Premium</strong> : transcription complète via ce même serveur.</p>
-            </div>
-            <div id="geminiKeyField" class="field hidden">
-              <label class="field-label" for="geminiApiKeyInput">Clé Google AI Studio (Gemini)</label>
-              <input
-                id="geminiApiKeyInput"
-                class="field-input"
-                type="password"
-                autocomplete="off"
-                placeholder="AIza… (si le serveur utilise STT_ENGINE=gemini)"
-              />
-              <p class="option-hint">Envoyée en <code>x-gemini-api-key</code> au backend. Inutile si <code>GEMINI_API_KEY</code> est déjà dans le <code>.env</code> serveur.</p>
-            </div>
+            <button type="button" id="tierPaidBtn" class="tier-segment__btn tier-segment__btn--premium" aria-pressed="false">
+              Premium
+            </button>
           </div>
-        </details>
+          <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
+        </div>
 
-        <div class="action-row" id="actionRow">
-          <button id="pickBtn" class="btn btn-ghost" type="button">
-            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-              <path d="M1.5 3.5h12M1.5 7.5h8M1.5 11.5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-            Choisir un fichier
-          </button>
+        <div id="transcriptorAdvancedSettings" class="hidden" aria-hidden="true">
+          <div id="backendUrlRow" class="field">
+            <label class="field-label" for="backendUrlInput">URL backend (diarisation)</label>
+            <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
+          </div>
+          <div id="geminiKeyField" class="field hidden">
+            <label class="field-label" for="geminiApiKeyInput">Clé Google AI Studio (Gemini)</label>
+            <input
+              id="geminiApiKeyInput"
+              class="field-input"
+              type="password"
+              autocomplete="off"
+              placeholder="AIza… (si le serveur utilise STT_ENGINE=gemini)"
+            />
+          </div>
+        </div>
+
+        <div class="action-row action-row--primary-only" id="actionRow">
           <button id="runBtn" class="btn btn-primary" type="button" disabled aria-disabled="true">
             Transcrire maintenant
           </button>
@@ -281,7 +267,7 @@
               <p class="option-hint">Seule la piste son est envoyée au lieu de la vidéo entière — recommandé pour les fichiers lourds.</p>
         </div>
 
-        <div id="reviewModeRow" class="option-row">
+        <div id="reviewModeRow" class="option-row hidden" aria-hidden="true">
           <label class="checkbox-label" for="reviewMode">
             <input id="reviewMode" type="checkbox" checked />
             <span>Vérifier les sous-titres avant téléchargement</span>
