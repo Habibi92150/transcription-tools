@@ -396,7 +396,8 @@
       const backendHeaders = { "x-groq-api-key": apiKey || "" };
       const gk = geminiApiKeyInput?.value.trim();
       if (gk) backendHeaders["x-gemini-api-key"] = gk;
-      else backendHeaders["x-skip-gemini"] = "1";
+      else if (!localBackendMode) backendHeaders["x-skip-gemini"] = "1";
+      // mode Premium : pas de x-skip-gemini, le serveur utilise sa propre GEMINI_API_KEY
 
       const data = localBackendMode
         ? await postBackendTranscription(
