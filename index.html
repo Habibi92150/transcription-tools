@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=card-harmony" />
 
 </head>
 
@@ -79,7 +79,7 @@
       </div>
     </button>
 
-    <button class="nav-item" data-page="next" type="button">
+    <button class="nav-item hidden" data-page="next" type="button" aria-hidden="true" tabindex="-1">
       <div class="nav-icon" aria-hidden="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
@@ -110,67 +110,42 @@
 
     <!-- INFO CARD -->
     <aside class="info-card" aria-label="À propos de Transcriptor">
-      <div class="panel">
-
-          <div>
-          <div class="studio-badge">SMM STUDIO</div>
-          <p class="info-headline">Tes sous-titres,<br><span>sans la galère.</span></p>
-          <p class="info-tagline">Du rush au .srt en quelques clics.</p>
-        </div>
-
-        <div class="info-steps">
-
-          <div class="info-step">
-            <div class="info-step-icon c1" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M9 12V4M9 4L5.5 7.5M9 4L12.5 7.5" stroke="#5E7A8A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2.5 13.5v.5A1.5 1.5 0 004 15.5h10a1.5 1.5 0 001.5-1.5v-.5" stroke="#5E7A8A" stroke-width="1.8" stroke-linecap="round" opacity="0.6"/>
-              </svg>
-            </div>
-            <div class="info-step-body">
-              <p class="info-step-title">Dépose ton fichier</p>
-              <p class="info-step-desc">MP4, MP3, rush brut ou monté — tout passe.</p>
-            </div>
-          </div>
-
-          <div class="info-divider"></div>
-
-          <div class="info-step">
-            <div class="info-step-icon c2" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M9 2.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z" stroke="#5E7A8A" stroke-width="1.6" opacity="0.5"/>
-                <path d="M6 9l2 2 4-4" stroke="#5E7A8A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="info-step-body">
-              <p class="info-step-title">L'IA transcrit à ta place</p>
-              <p class="info-step-desc">Timecodes précis, chaque mot capté. Tu ne relis que si tu veux.</p>
-            </div>
-          </div>
-
-          <div class="info-divider"></div>
-
-          <div class="info-step">
-            <div class="info-step-icon c3" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M9 2.5v9M9 11.5L6 8.5M9 11.5L12 8.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M3 13.5h12" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" opacity="0.5"/>
-              </svg>
-            </div>
-            <div class="info-step-body">
-              <p class="info-step-title">Ton .srt est prêt</p>
-              <p class="info-step-desc">Importe direct dans Premiere, CapCut ou DaVinci. Aucune friction.</p>
-            </div>
-          </div>
-
-        </div>
-
-          <div class="info-footer">
-          <div class="info-footer-dot"></div>
-          <p class="info-footer-text">Aucun fichier stocké · tout reste sur ton ordi.</p>
-        </div>
-
+      <div class="info-brand">
+        <span class="info-brand-dot"></span>
+        <span class="info-brand-name">SMM Studio</span>
       </div>
+
+      <h1 class="info-headline">Tes sous-titres sans tracas</h1>
+      <p class="info-tagline">Du rush au .srt en quelques clics.</p>
+
+      <ol class="info-stepper">
+        <li class="info-step info-step--active">
+          <span class="info-step-num" aria-hidden="true">01</span>
+          <div class="info-step-body">
+            <strong class="info-step-title">Dépose ton fichier</strong>
+            <p class="info-step-desc">MP4, MP3, rush brut ou monté — tout passe.</p>
+          </div>
+        </li>
+        <li class="info-step">
+          <span class="info-step-num" aria-hidden="true">02</span>
+          <div class="info-step-body">
+            <strong class="info-step-title">L'IA transcrit à ta place</strong>
+            <p class="info-step-desc">Timecodes précis, chaque mot capté. Un coup d'œil suffit pour corriger les coquilles.</p>
+          </div>
+        </li>
+        <li class="info-step">
+          <span class="info-step-num" aria-hidden="true">03</span>
+          <div class="info-step-body">
+            <strong class="info-step-title">Ton .srt est prêt</strong>
+            <p class="info-step-desc">Importe direct dans Premiere, CapCut ou DaVinci. Tu exportes, tu postes.</p>
+          </div>
+        </li>
+      </ol>
+
+      <footer class="info-footer">
+        <span class="info-footer-dot" aria-hidden="true"></span>
+        <span class="info-footer-text">Aucun fichier stocké · tout reste sur ton ordi.</span>
+      </footer>
     </aside>
 
     <!-- MAIN TOOL -->
@@ -207,7 +182,7 @@
           <div class="dz-file" aria-live="polite">
             <div class="dz-file-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M4 9.5L7.5 13L14 6" stroke="#6B8F71" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4 9.5L7.5 13L14 6" stroke="#FBA34B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </div>
             <div class="dz-file-info">
@@ -223,17 +198,43 @@
           <input id="apiKeyInput" class="field-input" type="password" autocomplete="off" placeholder="Saisir la clé d'accès équipe…" />
         </div>
 
-        <div id="tierModeBar" class="tier-mode-bar">
-          <span class="field-label tier-mode-label" id="tierModeLabel">Mode</span>
-          <div class="tier-segment tier-segment--hero" role="group" aria-labelledby="tierModeLabel">
+        <div class="panel-settings-card">
+          <div id="tierModeBar" class="tier-mode-bar">
+            <div class="tier-segment tier-segment--hero" role="group" aria-labelledby="tierModeLabel">
+              <span class="field-label tier-mode-label" id="tierModeLabel">Mode</span>
+              <div class="tier-segment__btns">
                 <button type="button" id="tierFreeBtn" class="tier-segment__btn tier-segment__btn--free tier-segment__btn--active" aria-pressed="true">
                   Gratuit
                 </button>
-            <button type="button" id="tierPaidBtn" class="tier-segment__btn tier-segment__btn--premium" aria-pressed="false">
-              Premium
+                <button type="button" id="tierPaidBtn" class="tier-segment__btn tier-segment__btn--premium" aria-pressed="false">
+                  Premium
+                </button>
+              </div>
+            </div>
+            <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
+          </div>
+
+          <div class="action-row action-row--primary-only" id="actionRow">
+            <button id="runBtn" class="btn btn-primary" type="button" disabled aria-disabled="true">
+              Transcrire maintenant
             </button>
           </div>
-          <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
+
+          <div id="extractRow" class="option-row hidden">
+            <label class="checkbox-label" for="extractAudio">
+              <input id="extractAudio" type="checkbox" />
+                  <span>Extraire l'audio avant l'envoi (upload plus rapide)</span>
+            </label>
+                <p class="option-hint">Seule la piste son est envoyée au lieu de la vidéo entière — recommandé pour les fichiers lourds.</p>
+          </div>
+
+          <div id="reviewModeRow" class="option-row hidden" aria-hidden="true">
+            <label class="checkbox-label" for="reviewMode">
+              <input id="reviewMode" type="checkbox" checked />
+              <span>Vérifier les sous-titres avant téléchargement</span>
+            </label>
+            <p class="option-hint">Après la transcription, ouvre l'éditeur avec lecteur pour ajuster texte et timings, puis télécharge le .srt.</p>
+          </div>
         </div>
 
         <div id="transcriptorAdvancedSettings" class="hidden" aria-hidden="true">
@@ -253,28 +254,6 @@
           </div>
         </div>
 
-        <div class="action-row action-row--primary-only" id="actionRow">
-          <button id="runBtn" class="btn btn-primary" type="button" disabled aria-disabled="true">
-            Transcrire maintenant
-          </button>
-        </div>
-
-        <div id="extractRow" class="option-row hidden">
-          <label class="checkbox-label" for="extractAudio">
-            <input id="extractAudio" type="checkbox" />
-                <span>Extraire l'audio avant l'envoi (upload plus rapide)</span>
-          </label>
-              <p class="option-hint">Seule la piste son est envoyée au lieu de la vidéo entière — recommandé pour les fichiers lourds.</p>
-        </div>
-
-        <div id="reviewModeRow" class="option-row hidden" aria-hidden="true">
-          <label class="checkbox-label" for="reviewMode">
-            <input id="reviewMode" type="checkbox" checked />
-            <span>Vérifier les sous-titres avant téléchargement</span>
-          </label>
-          <p class="option-hint">Après la transcription, ouvre l'éditeur avec lecteur pour ajuster texte et timings, puis télécharge le .srt.</p>
-        </div>
-
         <input id="fileInput" class="hidden" type="file" accept="audio/*,video/*" aria-hidden="true" tabindex="-1" />
       </section>
 
@@ -285,7 +264,7 @@
             <li class="step" data-step="prep" data-status="idle" role="listitem">
               <div class="step-dot" aria-hidden="true">
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
               </div>
               <span class="step-label">Préparation</span>
@@ -293,7 +272,7 @@
             <li class="step" data-step="upload" data-status="idle" role="listitem">
               <div class="step-dot" aria-hidden="true">
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
               </div>
               <span class="step-label">Envoi</span>
@@ -301,7 +280,7 @@
             <li class="step" data-step="transcribe" data-status="idle" role="listitem">
               <div class="step-dot" aria-hidden="true">
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
               </div>
               <span class="step-label">Transcription IA</span>
@@ -309,7 +288,7 @@
             <li class="step" data-step="format" data-status="idle" role="listitem">
               <div class="step-dot" aria-hidden="true">
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
               </div>
               <span class="step-label">Génération .srt</span>
@@ -333,7 +312,7 @@
         <div class="export-success">
           <div class="export-success-icon" aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M4 10.5L8 14.5L16 7" stroke="#6B8F71" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 10.5L8 14.5L16 7" stroke="#FBA34B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </div>
           <div>
@@ -480,8 +459,8 @@
                 <div class="info-step">
                   <div class="info-step-icon c3" aria-hidden="true">
                     <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                      <path d="M9 2.5v9M9 11.5L6 8.5M9 11.5L12 8.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M3 13.5h12" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" opacity="0.5"/>
+                      <path d="M9 2.5v9M9 11.5L6 8.5M9 11.5L12 8.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M3 13.5h12" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" opacity="0.5"/>
                     </svg>
                   </div>
                   <div class="info-step-body">
@@ -518,7 +497,7 @@
                 <div class="dz-file" aria-live="polite">
                   <div class="dz-file-icon" aria-hidden="true">
                     <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                      <path d="M4 9.5L7.5 13L14 6" stroke="#6B8F71" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M4 9.5L7.5 13L14 6" stroke="#FBA34B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                   </div>
                   <div class="dz-file-info">
@@ -570,7 +549,7 @@
                   <li class="step" data-step2="prep" data-status="idle" role="listitem">
                     <div class="step-dot" aria-hidden="true">
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
                     </div>
                     <span class="step-label">Préparation</span>
@@ -578,7 +557,7 @@
                   <li class="step" data-step2="upload" data-status="idle" role="listitem">
                     <div class="step-dot" aria-hidden="true">
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
                     </div>
                     <span class="step-label">Envoi</span>
@@ -586,7 +565,7 @@
                   <li class="step" data-step2="transcribe" data-status="idle" role="listitem">
                     <div class="step-dot" aria-hidden="true">
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
                     </div>
                     <span class="step-label">Transcription IA</span>
@@ -594,7 +573,7 @@
                   <li class="step" data-step2="summary" data-status="idle" role="listitem">
                     <div class="step-dot" aria-hidden="true">
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-idle"><circle cx="5.5" cy="5.5" r="2.2" fill="currentColor" opacity="0.4"/></svg>
-                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#6B8F71" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <svg width="11" height="11" viewBox="0 0 11 11" class="s-done" style="display:none"><path d="M2 5.5L4.5 8L9 3.5" stroke="#FBA34B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       <svg width="11" height="11" viewBox="0 0 11 11" class="s-err"  style="display:none"><path d="M2.5 2.5L8.5 8.5M8.5 2.5L2.5 8.5" stroke="#A85858" stroke-width="1.8" stroke-linecap="round"/></svg>
                     </div>
                     <span class="step-label">Résumé épisode</span>
@@ -616,7 +595,7 @@
               <div class="export-success">
                 <div class="export-success-icon" aria-hidden="true">
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <path d="M4 10.5L8 14.5L16 7" stroke="#6B8F71" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M4 10.5L8 14.5L16 7" stroke="#FBA34B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </div>
                 <div>
@@ -687,6 +666,19 @@
 
   <div id="toast-region" role="alert" aria-live="assertive" aria-atomic="true"></div>
   <div class="sr-only" id="sr-status" aria-live="polite"></div>
+
+  <div id="premiumPinGate" class="premium-pin-gate hidden" role="dialog" aria-modal="true" aria-labelledby="premiumPinTitle">
+    <div class="premium-pin-card">
+      <p class="pin-kicker">Accès Premium</p>
+      <h2 id="premiumPinTitle" class="pin-title">Code d'accès</h2>
+      <p class="pin-hint">Saisis le code à 4 chiffres pour activer le mode Premium.</p>
+      <form id="premiumPinForm" class="pin-form" autocomplete="off">
+        <input id="premiumPinInput" class="field-input pin-input" type="password" inputmode="numeric" maxlength="4" placeholder="••••" />
+        <div id="premiumPinError" class="pin-error hidden">Code incorrect.</div>
+        <button type="submit" class="btn btn-primary pin-submit">Valider</button>
+      </form>
+    </div>
+  </div>
 
   <script src="srt-core.js" defer></script>
   <script src="app.core.state.js" defer></script>

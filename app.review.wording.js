@@ -295,7 +295,8 @@
     setReviewActiveIndex(reviewActiveIndex);
   }
 
-  function openReviewPanel(baseName, segments, originalFile) {
+  /** Prépare l’éditeur (données + média) sans changer les panneaux — la progression reste visible. */
+  function prepareReviewPanel(baseName, segments, originalFile) {
     cleanupReviewMedia();
     reviewState = {
       baseName,
@@ -326,6 +327,12 @@
     resetWordingState();
     renderReviewList();
     setReviewActiveIndex(0);
+    reviewPanel.hidden = true;
+  }
+
+  /** Affiche l’éditeur après la phase progression (stepper terminé). */
+  function revealReviewPanel() {
+    if (!reviewState) return;
     uploadPanel.hidden = true;
     progressPanel.hidden = true;
     exportPanel.hidden = true;
