@@ -1,3 +1,36 @@
+  /** Code PIN pour déverrouiller le bouton Premium (session uniquement). */
+  const PREMIUM_PIN = "2912";
+
+  function isPremiumSessionUnlocked() {
+    return sessionStorage.getItem("premiumUnlocked") === "1";
+  }
+
+  function syncPremiumTierLockedClass() {
+    if (tierPaidBtn) {
+      tierPaidBtn.classList.toggle("tier-segment__btn--premium-locked", !isPremiumSessionUnlocked());
+    }
+  }
+
+  function openPremiumPin() {
+    const gate = document.getElementById("premiumPinGate");
+    const input = document.getElementById("premiumPinInput");
+    const errEl = document.getElementById("premiumPinError");
+    if (!gate || !input) return;
+    gate.classList.remove("hidden");
+    if (errEl) errEl.classList.add("hidden");
+    input.value = "";
+    input.focus();
+  }
+
+  function closePremiumPin() {
+    const gate = document.getElementById("premiumPinGate");
+    const input = document.getElementById("premiumPinInput");
+    const errEl = document.getElementById("premiumPinError");
+    if (gate) gate.classList.add("hidden");
+    if (input) input.value = "";
+    if (errEl) errEl.classList.add("hidden");
+  }
+
   // ========= Events =========
   extractAudio.addEventListener("change", () => {
     localStorage.setItem(EXTRACT_AUDIO_PREF_KEY, extractAudio.checked ? "1" : "0");
@@ -86,8 +119,57 @@
     tierFreeBtn.addEventListener("click", () => setLocalBackendMode(false));
   }
   if (tierPaidBtn) {
+    tierPaidBtn.addEventListener(
+      "click",
+      (e) => {
+        if (isPremiumSessionUnlocked()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openPremiumPin();
+      },
+      { capture: true }
+    );
     tierPaidBtn.addEventListener("click", () => setLocalBackendMode(true));
+    syncPremiumTierLockedClass();
   }
+
+  const premiumPinGate = document.getElementById("premiumPinGate");
+  const premiumPinForm = document.getElementById("premiumPinForm");
+  if (premiumPinForm) {
+    premiumPinForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("premiumPinInput");
+      const errEl = document.getElementById("premiumPinError");
+      const card = document.querySelector("#premiumPinGate .premium-pin-card");
+      const val = String(input?.value || "");
+      if (val === PREMIUM_PIN) {
+        sessionStorage.setItem("premiumUnlocked", "1");
+        if (tierPaidBtn) tierPaidBtn.classList.remove("tier-segment__btn--premium-locked");
+        closePremiumPin();
+        tierPaidBtn?.click();
+      } else {
+        if (card) {
+          card.classList.add("premium-pin-card--shake");
+          setTimeout(() => card.classList.remove("premium-pin-card--shake"), 400);
+        }
+        if (errEl) errEl.classList.remove("hidden");
+        if (input) {
+          input.value = "";
+          input.focus();
+        }
+      }
+    });
+  }
+  if (premiumPinGate) {
+    premiumPinGate.addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closePremiumPin();
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const gate = document.getElementById("premiumPinGate");
+    if (gate && !gate.classList.contains("hidden")) closePremiumPin();
+  });
   if (backendUrlInput) {
     backendUrlInput.oninput = () => {
       localStorage.setItem(BACKEND_URL_STORAGE_KEY, String(backendUrlInput.value || "").trim());
@@ -386,7 +468,7 @@
       const reviewEnabled = !!reviewMode?.checked;
       let srtFileName = `${baseName}_transcription.srt`;
       if (reviewEnabled) {
-        openReviewPanel(baseName, segments, selectedFile);
+        prepareReviewPanel(baseName, segments, selectedFile);
       } else {
         const srtContent = buildSrtFromSegments(segments);
         download(srtContent, srtFileName);
@@ -397,12 +479,13 @@
       recordJobStat(fileToSend.size, modeKey, Date.now() - jobT0);
       stopRemainTimer();
       setEta("Terminé");
-      sr(reviewEnabled ? "Transcription terminée. Relecture disponible." : "Transcription terminée. Le fichier .srt a été téléchargé.");
+      sr(reviewEnabled ? "Transcription terminée. Ouverture de la relecture…" : "Transcription terminée. Le fichier .srt a été téléchargé.");
 
       setTimeout(() => {
         progressPanel.hidden = true;
         if (reviewEnabled) {
           exportPanel.hidden = true;
+          revealReviewPanel();
         } else {
           exportPanel.hidden = false;
           exportMeta.textContent = `${srtFileName} · ${segments.length} segments`;
