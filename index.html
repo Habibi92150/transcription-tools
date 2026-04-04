@@ -227,16 +227,25 @@
           <summary class="settings-disclosure-summary"><span class="settings-disclosure-icon" aria-hidden="true">⚙️</span> Paramètres</summary>
           <div class="settings-disclosure-body">
             <div id="localModeRow" class="option-row">
-              <label class="checkbox-label" for="localMode">
-                <input id="localMode" type="checkbox" />
-                <span>Mode backend local/hébergé (sans clé API externe)</span>
-              </label>
-              <p class="option-hint">Quand activé, l'app envoie l'audio extrait au backend Node (`/api/transcribe`).</p>
+              <span class="field-label tier-mode-label" id="tierModeLabel">Mode transcription</span>
+              <div class="tier-segment" role="group" aria-labelledby="tierModeLabel">
+                <button type="button" id="tierFreeBtn" class="tier-segment__btn tier-segment__btn--active" aria-pressed="true">
+                  Gratuit
+                </button>
+                <button type="button" id="tierPaidBtn" class="tier-segment__btn" aria-pressed="false">
+                  Premium
+                </button>
+              </div>
+              <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
+              <p class="option-hint tier-mode-hint">
+                <strong>Gratuit</strong> : envoi à Groq avec l’accès équipe. <strong>Premium</strong> : audio vers ton backend Node (<code>/api/transcribe</code>), STT local ou Gemini selon configuration.
+              </p>
             </div>
 
-            <div id="backendUrlRow" class="field hidden">
-              <label class="field-label" for="backendUrlInput">URL backend</label>
+            <div id="backendUrlRow" class="field">
+              <label class="field-label" for="backendUrlInput">URL backend (diarisation)</label>
               <input id="backendUrlInput" class="field-input" type="text" autocomplete="off" placeholder="http://localhost:8787" />
+              <p class="option-hint">En mode <strong>Gratuit</strong> : Groq transcrit dans le navigateur ; cette URL sert à l’alignement des interlocuteurs (Pyannote ou diarisation locale selon le <code>.env</code>). En <strong>Premium</strong> : transcription complète via ce même serveur.</p>
             </div>
             <div id="geminiKeyField" class="field hidden">
               <label class="field-label" for="geminiApiKeyInput">Clé Google AI Studio (Gemini)</label>

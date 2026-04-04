@@ -162,9 +162,15 @@
   function syncModeUi() {
     if (!localMode || !backendUrlRow || !apiKeyInput) return;
     const local = isLocalModeEnabled();
-    backendUrlRow.classList.toggle("hidden", !local);
+    backendUrlRow.classList.remove("hidden");
     apiKeyInput.closest(".field")?.classList.toggle("hidden", local);
     if (geminiKeyField) geminiKeyField.classList.toggle("hidden", !local);
+    if (tierFreeBtn && tierPaidBtn) {
+      tierFreeBtn.classList.toggle("tier-segment__btn--active", !local);
+      tierPaidBtn.classList.toggle("tier-segment__btn--active", local);
+      tierFreeBtn.setAttribute("aria-pressed", String(!local));
+      tierPaidBtn.setAttribute("aria-pressed", String(local));
+    }
   }
 
   function refreshRunButton() {
@@ -288,6 +294,47 @@
         if (e.lengthComputable) onProgress?.(e.loaded / e.total);
       };
       xhr.upload.onload = () => onComplete?.();
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText || "{}"));
+          } catch {
+            reject(new Error("GENERIC"));
+          }
+        } else {
+          let detail = "";
+          try {
+            const parsed = JSON.parse(xhr.responseText || "{}");
+            detail = String(parsed?.error || parsed?.message || "").trim();
+          } catch {
+            detail = String(xhr.responseText || "").trim();
+          }
+          const err = new Error("BACKEND_ERROR");
+          err.status = xhr.status;
+          err.detail = detail;
+          reject(err);
+        }
+      };
+      xhr.onerror = () => reject(new Error("NETWORK_ERROR"));
+      xhr.send(formData);
+    });
+  }
+
+  function postBackendAlignSpeakers(url, file, segments, extraHeaders = {}) {
+    return new Promise((resolve, reject) => {
+      if (!appUnlocked) {
+        reject(new Error("LOCKED"));
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("segments", JSON.stringify(segments));
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      for (const [k, v] of Object.entries(extraHeaders || {})) {
+        if (v) xhr.setRequestHeader(k, String(v));
+      }
+      xhr.upload.onprogress = () => {};
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
