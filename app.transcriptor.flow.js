@@ -80,6 +80,11 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
+  fetch("/api/config").then(r => r.json()).then(cfg => {
+    if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
+    if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
+    refreshRunButton();
+  }).catch(() => {});
   const savedGeminiKey = localStorage.getItem(GEMINI_KEY_STORAGE);
   if (geminiApiKeyInput && savedGeminiKey) geminiApiKeyInput.value = savedGeminiKey;
   const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
