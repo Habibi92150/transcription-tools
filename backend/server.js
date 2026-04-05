@@ -1715,7 +1715,7 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
 
 // Config publique pour le frontend
 app.get('/api/config', (_req, res) => {
-  res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: '' });
+  res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: process.env.BACKEND_URL || '' });
 });
 
 app.post("/api/auth/premium", express.json(), (req, res) => {

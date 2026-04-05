@@ -107,7 +107,7 @@
   const APP_PIN_CODE_STORAGE_KEY = "app_pin_code";
   const APP_PIN_UNLOCKED_STORAGE_KEY = "app_pin_unlocked";
   const APP_PIN_FIXED_CODE = "2912";
-  const DEFAULT_BACKEND_URL = "https://adamstudio.duckdns.org";
+  const DEFAULT_BACKEND_URL = "http://localhost:8787";
   const JOB_STATS_KEY = "transcriptor_job_stats_v1";
   const JOB_STATS_MAX = 18;
 
