@@ -67,15 +67,6 @@
     setEta(ETA_TRANSCRIBE);
     stopRemainTimer();
     cleanupReviewMedia();
-    if (instagramWordingPanel) {
-      instagramWordingPanel.hidden = true;
-      if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
-      if (instagramWordingError) {
-        instagramWordingError.textContent = "";
-        instagramWordingError.classList.add("hidden");
-      }
-      if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
-    }
     refreshRunButton();
   }
 
