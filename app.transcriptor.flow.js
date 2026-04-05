@@ -39,6 +39,15 @@
     if (errEl) errEl.classList.add("hidden");
   }
 
+  function setInfoStep(activeNum) {
+    document.querySelectorAll("#page-transcriptor .info-step").forEach((el, i) => {
+      const num = i + 1;
+      el.classList.toggle("info-step--active", num === activeNum);
+      el.classList.toggle("info-step--done", num < activeNum);
+      el.classList.toggle("info-step--inactive", num > activeNum);
+    });
+  }
+
   // ========= Events =========
   extractAudio.addEventListener("change", () => {
     localStorage.setItem(EXTRACT_AUDIO_PREF_KEY, extractAudio.checked ? "1" : "0");
@@ -88,7 +97,7 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
-  fetch("/api/config").then(r => r.json()).then(cfg => {
+  fetch((localStorage.getItem("local_backend_url") || "http://localhost:8787").replace(/\/$/, "") + "/api/config").then(r => r.json()).then(cfg => {
     if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
     if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
     refreshRunButton();
@@ -102,6 +111,7 @@
   const savedReviewMode = localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
   if (reviewMode) reviewMode.checked = savedReviewMode == null ? true : savedReviewMode === "1";
   syncModeUi();
+  setInfoStep(1);
 
   apiKeyInput.oninput = () => {
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value.trim());
@@ -129,7 +139,11 @@
     };
   }
   if (tierFreeBtn) {
-    tierFreeBtn.addEventListener("click", () => setLocalBackendMode(false));
+    tierFreeBtn.addEventListener("click", () => {
+      sessionStorage.removeItem("premiumToken");
+      sessionStorage.removeItem("premiumTokenExpiry");
+      setLocalBackendMode(false);
+    });
   }
   if (tierPaidBtn) {
     tierPaidBtn.addEventListener(
@@ -241,17 +255,11 @@
   }
 
   newTranscriptionBtn.onclick = () => {
+    setInfoStep(1);
     setSelectedFile(null);
     fileInput.value = "";
     resetUI();
   };
-
-  const instagramNewJobBtn = $("instagramNewJobBtn");
-  if (instagramNewJobBtn) {
-    instagramNewJobBtn.addEventListener("click", () => {
-      newTranscriptionBtn.click();
-    });
-  }
 
   reviewList.addEventListener("focusout", (e) => {
     if (!reviewState) return;
@@ -371,6 +379,7 @@
   };
 
   reviewDownloadBtn.onclick = () => {
+    setInfoStep(3);
     if (!reviewState) return;
     const safeSegments = reviewState.editedSegments
       .map((seg) => ({
@@ -383,31 +392,17 @@
       return;
     }
     const content = buildSrtFromSegments(safeSegments);
-    const fileName = `${reviewState.baseName}_transcription_corrigee.srt`;
+    const fileName = `${reviewState.baseName}_transcription_corrigee_viapremium.srt`;
     download(content, fileName);
     exportMeta.textContent = `${fileName} · ${safeSegments.length} segments`;
-    if (isPremiumSessionUnlocked()) {
-      showInstagramWordingAfterPremiumExport();
-      sr("SRT corrigé téléchargé. Génération des légendes Instagram…");
-    } else {
-      reviewPanel.hidden = true;
-      exportPanel.hidden = false;
-      sr("SRT corrigé téléchargé.");
-    }
+    reviewPanel.hidden = true;
+    exportPanel.hidden = false;
+    sr("SRT corrigé téléchargé.");
   };
 
   if (reviewCancelBtn) {
     reviewCancelBtn.onclick = () => {
       cleanupReviewMedia();
-      if (instagramWordingPanel) {
-        instagramWordingPanel.hidden = true;
-        if (instagramWordingGrid) instagramWordingGrid.innerHTML = "";
-        if (instagramWordingError) {
-          instagramWordingError.textContent = "";
-          instagramWordingError.classList.add("hidden");
-        }
-        if (instagramWordingRetryWrap) instagramWordingRetryWrap.classList.add("hidden");
-      }
       reviewPanel.hidden = true;
       uploadPanel.hidden = false;
       actionRow.hidden = false;
@@ -416,28 +411,6 @@
       sr("Relecture annulée.");
       refreshRunButton();
     };
-  }
-
-  if (instagramWordingGrid) {
-    instagramWordingGrid.addEventListener("click", async (e) => {
-      const btn = e.target.closest("[data-copy-instagram]");
-      if (!btn) return;
-      const idx = Number(btn.dataset.copyInstagram);
-      const card = instagramWordingGrid.querySelector(`[data-ig-cap-idx="${idx}"]`);
-      const textEl = card?.querySelector(".instagram-caption-text");
-      const text = textEl?.textContent?.trim() || "";
-      if (!text) return;
-      try {
-        await navigator.clipboard.writeText(text);
-        const prev = btn.textContent;
-        btn.textContent = "Copié ✓";
-        setTimeout(() => {
-          btn.textContent = prev;
-        }, 2000);
-      } catch {
-        showToast("Impossible de copier automatiquement.");
-      }
-    });
   }
 
   // ========= Navigation =========
@@ -466,6 +439,7 @@
 
   // ========= Run =========
   runBtn.onclick = async () => {
+    setInfoStep(1);
     syncPremiumKeyOnBlur();
     const apiKey = apiKeyInput.value.trim();
     const localBackendMode = isLocalModeEnabled();
@@ -604,8 +578,8 @@
       // Mode Gratuit (Groq dans le navigateur) : pas de diarisation ni align-speakers.
       // Les locuteurs ne sont pas détectés ; le Premium reste sur /api/transcribe (backend) inchangé.
 
-      const reviewEnabled = !!reviewMode?.checked && isPremiumSessionUnlocked();
-      let srtFileName = `${baseName}_transcription.srt`;
+      const reviewEnabled = !!reviewMode?.checked && isLocalModeEnabled() && isPremiumSessionUnlocked();
+      let srtFileName = `${baseName}_transcription_viagratuit.srt`;
       if (reviewEnabled) {
         prepareReviewPanel(baseName, segments, selectedFile, localBackendMode ? "backend" : "cloud-premium");
       } else {
@@ -625,6 +599,7 @@
         if (reviewEnabled) {
           exportPanel.hidden = true;
           revealReviewPanel();
+          setInfoStep(2);
         } else {
           exportPanel.hidden = false;
           exportMeta.textContent = `${srtFileName} · ${segments.length} segments`;
