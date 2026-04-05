@@ -97,7 +97,7 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
-  fetch((localStorage.getItem("local_backend_url") || "http://localhost:8787").replace(/\/$/, "") + "/api/config").then(r => r.json()).then(cfg => {
+  fetch("/api/config").then(r => r.json()).then(cfg => {
     if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
     if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
     refreshRunButton();
