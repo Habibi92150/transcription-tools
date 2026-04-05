@@ -54,11 +54,6 @@
   const reviewResetBtn = $("reviewResetBtn");
   const reviewCaptureBtn = $("reviewCaptureBtn");
   const reviewListHead = $("reviewListHead");
-  const instagramWordingPanel = $("instagram-wording-panel");
-  const instagramWordingGrid = $("instagramWordingGrid");
-  const instagramWordingError = $("instagramWordingError");
-  const instagramWordingRetryWrap = $("instagramWordingRetryWrap");
-  const instagramWordingRetryBtn = $("instagramWordingRetryBtn");
   const reviewWordingGenerateBtn = $("reviewWordingGenerateBtn");
   const reviewWordingSource = $("reviewWordingSource");
   const reviewWordingStatus = $("reviewWordingStatus");
