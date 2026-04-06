@@ -97,17 +97,24 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
-  fetch("/api/config").then(r => r.json()).then(cfg => {
-    if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
-    if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
-    refreshRunButton();
-  }).catch(() => {});
+  const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
+  if (backendUrlInput) backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
+  const configBase = getBackendUrl().replace(/\/$/, "");
+  fetch(`${configBase}/api/config`)
+    .then((r) => {
+      if (!r.ok) throw new Error(`config ${r.status}`);
+      return r.json();
+    })
+    .then((cfg) => {
+      if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
+      if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
+      refreshRunButton();
+    })
+    .catch(() => {});
   const savedGeminiKey = localStorage.getItem(GEMINI_KEY_STORAGE);
   if (geminiApiKeyInput && savedGeminiKey) geminiApiKeyInput.value = savedGeminiKey;
   const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
   if (localMode) localMode.checked = savedLocalMode === "1";
-  const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
-  if (backendUrlInput) backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
   const savedReviewMode = localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
   if (reviewMode) reviewMode.checked = savedReviewMode == null ? true : savedReviewMode === "1";
   syncModeUi();
