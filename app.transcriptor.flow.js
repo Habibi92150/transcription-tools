@@ -97,20 +97,33 @@
 
   const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
   if (savedKey) apiKeyInput.value = savedKey;
-  const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
-  if (backendUrlInput) backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
-  const configBase = getBackendUrl().replace(/\/$/, "");
-  fetch(`${configBase}/api/config`)
+  // /api/config en URL relative = toujours correct quel que soit le localStorage du client
+  // Si le serveur renvoie une backendUrl, elle prime TOUJOURS sur localStorage (évite les URLs périmées)
+  fetch("/api/config")
     .then((r) => {
       if (!r.ok) throw new Error(`config ${r.status}`);
       return r.json();
     })
     .then((cfg) => {
       if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
-      if (cfg.backendUrl && backendUrlInput && !backendUrlInput.value) backendUrlInput.value = cfg.backendUrl;
+      if (cfg.backendUrl && backendUrlInput) {
+        // Serveur connaît la bonne URL → on force et on met à jour localStorage
+        backendUrlInput.value = cfg.backendUrl;
+        localStorage.setItem(BACKEND_URL_STORAGE_KEY, cfg.backendUrl);
+      } else if (backendUrlInput) {
+        // Pas d'URL serveur (dev local) → localStorage puis défaut
+        const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
+        backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
+      }
       refreshRunButton();
     })
-    .catch(() => {});
+    .catch(() => {
+      // /api/config inaccessible (dev local hors ligne) → fallback localStorage
+      if (backendUrlInput) {
+        const savedBackendUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY);
+        backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
+      }
+    });
   const savedGeminiKey = localStorage.getItem(GEMINI_KEY_STORAGE);
   if (geminiApiKeyInput && savedGeminiKey) geminiApiKeyInput.value = savedGeminiKey;
   const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
