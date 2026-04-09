@@ -94,7 +94,10 @@ function parseGroqCleanupHints() {
 const TMP_DIR = path.join(os.tmpdir(), "transcription-tools");
 
 const app = express();
-app.use(cors());
+const _corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : null;
+app.use(cors(_corsOrigins ? { origin: _corsOrigins } : {}));
 
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
@@ -1630,7 +1633,7 @@ function validatePremiumToken(token) {
 app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   try {
@@ -1753,7 +1756,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   let segmentsIn;
@@ -1803,7 +1806,7 @@ app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
 app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   try {
@@ -1881,9 +1884,14 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
 });
 
 
-// Config publique pour le frontend
-app.get('/api/config', (_req, res) => {
-  res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: process.env.BACKEND_URL || '' });
+// Config pour le frontend — la clé Groq n'est retournée qu'avec un token premium valide
+app.get('/api/config', (req, res) => {
+  const premiumToken = String(req.headers["x-premium-token"] || "").trim();
+  const isPremium = validatePremiumToken(premiumToken);
+  res.json({
+    groqApiKey: isPremium ? (process.env.GROQ_API_KEY || '') : '',
+    backendUrl: process.env.BACKEND_URL || '',
+  });
 });
 
 app.post("/api/auth/premium", express.json(), (req, res) => {
@@ -1900,6 +1908,16 @@ app.post("/api/auth/premium", express.json(), (req, res) => {
   const hmac = crypto.createHmac("sha256", PREMIUM_SECRET).update(payload).digest("hex");
   const token = expiresAt + "." + hmac;
   return res.json({ token, expiresAt });
+});
+
+// Gestionnaire d'erreurs Multer (fichier trop volumineux, format refusé, etc.)
+app.use((err, _req, res, next) => {
+  if (err && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({
+      error: `Fichier trop volumineux. Taille maximale autorisée : ${MAX_FILE_MB} Mo.`,
+    });
+  }
+  next(err);
 });
 
 app.listen(PORT, async () => {
