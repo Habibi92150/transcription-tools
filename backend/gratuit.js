@@ -205,26 +205,111 @@ function normalizeFrenchTypography(input) {
   return text;
 }
 
-function parseJsonLoose(text) {
-  const raw = String(text || "").trim();
-  if (!raw) throw new Error("Empty JSON payload");
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const block = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-    if (block) { try { return JSON.parse(block.trim()); } catch {} }
-    const arrStart = raw.indexOf("[");
-    const arrEnd = raw.lastIndexOf("]");
-    if (arrStart >= 0 && arrEnd > arrStart) {
-      try { return JSON.parse(raw.slice(arrStart, arrEnd + 1)); } catch {}
+/** BOM / zero-width — souvent présents dans les flux Gemini. */
+function sanitizeJsonCandidateText(s) {
+  let t = String(s || "").replace(/^\uFEFF/, "").trim();
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  return t;
+}
+
+/** Virgules finales avant ] ou } (JSON strict interdit ; modèles les produisent parfois). */
+function stripTrailingCommasInJsonLike(fragment) {
+  let out = fragment;
+  let prev;
+  do {
+    prev = out;
+    out = out.replace(/,(\s*[\]}])/g, "$1");
+  } while (out !== prev);
+  return out;
+}
+
+/**
+ * Extrait la première valeur JSON équilibrée à partir de `fromIdx` ([...] ou {...}),
+ * en ignorant accolades/crochets dans les chaînes JSON.
+ */
+function extractBalancedJsonFragment(s, fromIdx, open, close) {
+  if (fromIdx < 0 || fromIdx >= s.length || s[fromIdx] !== open) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = fromIdx; i < s.length; i++) {
+    const c = s[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = false;
+        continue;
+      }
+      continue;
     }
-    const first = raw.indexOf("{");
-    const last = raw.lastIndexOf("}");
-    if (first >= 0 && last > first) {
-      try { return JSON.parse(raw.slice(first, last + 1)); } catch {}
+    if (c === '"') {
+      inString = true;
+      continue;
     }
-    throw new Error("Invalid JSON payload");
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) return s.slice(fromIdx, i + 1);
+    }
   }
+  return null;
+}
+
+function tryParseJsonLenient(fragment) {
+  const variants = [fragment, stripTrailingCommasInJsonLike(fragment)];
+  for (const v of variants) {
+    try {
+      return JSON.parse(v);
+    } catch {
+      /* continue */
+    }
+  }
+  return null;
+}
+
+/** Tente d’extraire un objet ou un tableau JSON depuis du texte bruité (LLM). */
+function extractJsonObjectOrArrayFromText(s) {
+  const bracket = s.indexOf("[");
+  const brace = s.indexOf("{");
+  const tries = [];
+  if (bracket >= 0) tries.push({ i: bracket, open: "[", close: "]" });
+  if (brace >= 0) tries.push({ i: brace, open: "{", close: "}" });
+  tries.sort((a, b) => a.i - b.i);
+  for (const { i, open, close } of tries) {
+    const frag = extractBalancedJsonFragment(s, i, open, close);
+    if (!frag) continue;
+    const parsed = tryParseJsonLenient(frag);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function parseJsonLoose(text) {
+  const raw = sanitizeJsonCandidateText(text);
+  if (!raw) throw new Error("Empty JSON payload");
+  const direct = tryParseJsonLenient(raw);
+  if (direct !== null) return direct;
+
+  const block = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (block) {
+    const inner = sanitizeJsonCandidateText(block);
+    const fromFence = tryParseJsonLenient(inner);
+    if (fromFence !== null) return fromFence;
+    const extracted = extractJsonObjectOrArrayFromText(inner);
+    if (extracted !== null) return extracted;
+  }
+
+  const extracted = extractJsonObjectOrArrayFromText(raw);
+  if (extracted !== null) return extracted;
+
+  throw new Error("Invalid JSON payload");
 }
 
 function buildTranscriptPreviewForCleanup(segments, maxChars) {
@@ -467,32 +552,186 @@ function geminiResponseErrorHint(data) {
   return "";
 }
 
+const SRT_ARROW_LINE_RE =
+  /(\d{1,2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3})/;
 
-function normalizeGeminiSttSegmentsFromPayload(parsed) {
-  const arr = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.segments)
-      ? parsed.segments
-      : null;
-  if (!arr) throw new Error("Gemini STT: la réponse JSON doit être un tableau de segments");
+function textLooksLikeSrtSubtitles(s) {
+  const t = String(s || "");
+  return SRT_ARROW_LINE_RE.test(t);
+}
 
+function srtTimestampToSeconds(ts) {
+  const m = String(ts || "")
+    .trim()
+    .replace(".", ",")
+    .match(/^(\d{1,2}):(\d{2}):(\d{2}),(\d{3})$/);
+  if (!m) return NaN;
+  const h = Number(m[1]);
+  const mn = Number(m[2]);
+  const sec = Number(m[3]);
+  const ms = Number(m[4]);
+  if ([h, mn, sec, ms].some((n) => !Number.isFinite(n))) return NaN;
+  return h * 3600 + mn * 60 + sec + ms / 1000;
+}
+
+/**
+ * Parse sous-titres type SRT / WebVTT (cues avec -->), car Gemini renvoie parfois ce format au lieu du JSON demandé.
+ */
+function parseSrtLikeToSegments(raw) {
+  const normalized = String(raw || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  if (normalized.trimStart().startsWith("WEBVTT")) {
+    const body = normalized.replace(/^WEBVTT[^\n]*\n+/i, "");
+    return parseSrtLikeToSegments(body);
+  }
+  const lines = normalized.split("\n");
   const out = [];
-  for (const row of arr) {
-    const text = String(row?.text || "").trim();
-    if (!text) continue;
-    const start = Number(row?.start);
-    const end = Number(row?.end);
-    const speakerRaw = String(row?.speaker || "Speaker 1").trim() || "Speaker 1";
+  let i = 0;
+  while (i < lines.length) {
+    while (i < lines.length && !String(lines[i]).trim()) i++;
+    if (i >= lines.length) break;
+    let line = String(lines[i]).trim();
+    if (/^\d+$/.test(line)) {
+      i++;
+      if (i >= lines.length) break;
+      line = String(lines[i]).trim();
+    }
+    const tm = line.match(SRT_ARROW_LINE_RE);
+    if (!tm) {
+      i++;
+      continue;
+    }
+    const start = srtTimestampToSeconds(tm[1]);
+    const end = srtTimestampToSeconds(tm[2]);
+    i++;
+    const textLines = [];
+    while (i < lines.length && String(lines[i]).trim() !== "") {
+      textLines.push(String(lines[i]).trim());
+      i++;
+    }
+    let cueText = textLines.join(" ").replace(/\s+/g, " ").trim();
+    cueText = cueText.replace(/^-\s+/, "").trim();
+    if (!cueText) continue;
+    const s0 = Number.isFinite(start) ? Math.max(0, start) : 0;
+    const s1 = Number.isFinite(end) ? Math.max(0, end) : s0;
     out.push({
-      start: Number.isFinite(start) ? Math.max(0, start) : 0,
-      end: Number.isFinite(end) ? Math.max(0, end) : 0,
-      text,
-      speaker: speakerRaw,
+      start: s0,
+      end: Math.max(s1, s0),
+      text: cueText,
+      speaker: "Speaker 1",
     });
   }
-  if (!out.length) throw new Error("Gemini STT: aucun segment texte exploitable");
   out.sort((a, b) => a.start - b.start);
   return out;
+}
+
+function expandSegmentsIfSingleWrappedSrt(segments) {
+  if (!Array.isArray(segments) || segments.length !== 1) return segments;
+  const t = String(segments[0]?.text || "");
+  if (!textLooksLikeSrtSubtitles(t)) return segments;
+  const inner = parseSrtLikeToSegments(t);
+  return inner.length ? inner : segments;
+}
+
+
+function segmentRowText(row) {
+  if (!row || typeof row !== "object") return "";
+  return String(row.text ?? row.content ?? row.transcript ?? row.utterance ?? row.value ?? "").trim();
+}
+
+function rowLooksLikeSttSegment(row) {
+  return segmentRowText(row) !== "";
+}
+
+/**
+ * Gemini renvoie parfois { transcript: [...] }, { results: [...] }, un seul objet segment, etc.
+ */
+function coerceGeminiSttSegmentsArray(parsed, depth = 0) {
+  if (depth > 8 || parsed == null) return null;
+  if (Array.isArray(parsed)) {
+    return parsed.some(rowLooksLikeSttSegment) ? parsed : null;
+  }
+  if (typeof parsed !== "object") return null;
+  if (Array.isArray(parsed.segments) && parsed.segments.some(rowLooksLikeSttSegment)) return parsed.segments;
+
+  const preferredKeys = [
+    "transcript",
+    "transcription",
+    "transcriptions",
+    "segments",
+    "results",
+    "items",
+    "entries",
+    "utterances",
+    "chunks",
+    "parts",
+    "lines",
+    "subtitles",
+    "data",
+    "response",
+  ];
+  for (const k of preferredKeys) {
+    const v = parsed[k];
+    if (Array.isArray(v) && v.some(rowLooksLikeSttSegment)) return v;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const inner = coerceGeminiSttSegmentsArray(v, depth + 1);
+      if (inner) return inner;
+    }
+  }
+  for (const k of Object.keys(parsed)) {
+    if (preferredKeys.includes(k)) continue;
+    const v = parsed[k];
+    if (Array.isArray(v) && v.some(rowLooksLikeSttSegment)) return v;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const inner = coerceGeminiSttSegmentsArray(v, depth + 1);
+      if (inner) return inner;
+    }
+  }
+  if (rowLooksLikeSttSegment(parsed)) return [parsed];
+  return null;
+}
+
+function normalizeGeminiSttSegmentsFromPayload(parsed) {
+  if (typeof parsed === "string") {
+    if (textLooksLikeSrtSubtitles(parsed)) {
+      const srt = parseSrtLikeToSegments(parsed);
+      if (srt.length) return srt;
+    }
+    throw new Error("Gemini STT: la réponse JSON doit être un tableau de segments");
+  }
+
+  const arr = coerceGeminiSttSegmentsArray(parsed);
+  if (arr) {
+    const out = [];
+    for (const row of arr) {
+      const text = segmentRowText(row);
+      if (!text) continue;
+      const start = Number(row?.start);
+      const end = Number(row?.end);
+      const speakerRaw = String(row?.speaker || "Speaker 1").trim() || "Speaker 1";
+      out.push({
+        start: Number.isFinite(start) ? Math.max(0, start) : 0,
+        end: Number.isFinite(end) ? Math.max(0, end) : 0,
+        text,
+        speaker: speakerRaw,
+      });
+    }
+    if (!out.length) throw new Error("Gemini STT: aucun segment texte exploitable");
+    out.sort((a, b) => a.start - b.start);
+    return expandSegmentsIfSingleWrappedSrt(out);
+  }
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    for (const v of Object.values(parsed)) {
+      if (typeof v === "string" && textLooksLikeSrtSubtitles(v)) {
+        const srt = parseSrtLikeToSegments(v);
+        if (srt.length) return srt;
+      }
+    }
+  }
+  throw new Error("Gemini STT: la réponse JSON doit être un tableau de segments");
 }
 
 function splitLongSegmentsBackend(segments, maxDurationSec = 8) {
@@ -548,7 +787,8 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         "Ne te focalise pas uniquement sur la voix la plus discrète : la transcription complète de tous les intervenants prime.\n" +
         "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
         '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
-        "Les timestamps sont en secondes. Sois précis à 0.1 seconde près."
+        "Les timestamps sont en secondes (nombres décimaux), pas en format sous-titres.\n" +
+        "Interdit : format SRT/WebVTT, lignes du type 00:00:00,000 --> 00:00:01,000, numéros de réplique seuls, ou texte récapitulatif à la place des segments."
       : "Tu es un assistant de transcription audio professionnel.\n" +
         "Transcris l'intégralité de l'audio en français, mot à mot pour chaque intervenant : " +
         "tours de parole longs, voix dominantes et proches du micro inclus — ne saute aucun passage parlé substantiel.\n" +
@@ -557,10 +797,11 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         "cela ne doit jamais se faire au prix d'omettre ou de minimiser ce que disent les autres.\n" +
         "Retourne UNIQUEMENT un JSON valide, sans markdown, sous ce format exact :\n" +
         '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
-        "Les timestamps sont en secondes. Sois précis à 0.1 seconde près.";
+        "Les timestamps sont en secondes (nombres décimaux), pas en format sous-titres.\n" +
+        "Interdit : format SRT/WebVTT, lignes du type 00:00:00,000 --> 00:00:01,000, numéros de réplique seuls, ou texte récapitulatif à la place des segments.";
     const userHint = speakerDiarizationPass
-      ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement."
-      : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre.";
+      ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement (tableau d'objets start/end/text/speaker), jamais de .srt."
+      : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre — pas de format sous-titres .srt.";
 
     const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
     const baseParts = [
@@ -622,7 +863,16 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         throw new Error(`Gemini STT empty response${hint ? ` (${hint})` : ""}`);
       }
       console.log("[gemini] STT raw response (first 500 chars):", text.slice(0, 500));
-      const parsed = parseJsonLoose(text);
+      let parsed;
+      try {
+        parsed = parseJsonLoose(text);
+      } catch (e) {
+        if (textLooksLikeSrtSubtitles(text)) {
+          const srt = parseSrtLikeToSegments(text);
+          if (srt.length) return srt;
+        }
+        throw e;
+      }
       return normalizeGeminiSttSegmentsFromPayload(parsed);
     } finally {
       clearTimeout(timeout);

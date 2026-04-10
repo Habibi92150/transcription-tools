@@ -46,6 +46,7 @@ const PREMIUM_STT_SYSTEM_PROMPT =
   "SORTIE : JSON brut uniquement. Aucun texte avant ou après. Aucun markdown. Aucun backtick.\n" +
   "Format exact — tableau d'objets :\n" +
   '[{"start": 0.00, "end": 2.35, "text": "Bonjour tout le monde.", "speaker": "Speaker 1"}]\n' +
+  "Timestamps en secondes décimales, jamais en format SRT/WebVTT (pas de 00:00:00,000 --> ...).\n" +
   "\n" +
   "TIMESTAMPS\n" +
   "- Précision : 0.05 s\n" +
