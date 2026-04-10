@@ -113,22 +113,36 @@ async function bufferLooksLikeDecodableWav(buf) {
   }
 }
 
+function isMp3Buffer(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 3) return false;
+  // ID3 tag
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true;
+  // MPEG sync
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true;
+  return false;
+}
+
 /**
- * Diarisation locale (wav-decoder) attend du PCM WAV 16 kHz mono.
- * Les uploads MP3/MP4/M4A échouaient silencieusement → fallback gaps seulement.
+ * Garantit un fichier MP3 avant envoi à Gemini STT.
+ * Si le fichier est déjà un MP3 → retourné tel quel.
+ * Sinon → converti en MP3 via ffmpeg.
  */
-async function ensureWavForDiarization(srcPath) {
-  const buf = await fs.readFile(srcPath);
-  if (await bufferLooksLikeDecodableWav(buf)) {
+async function ensureMp3ForGemini(srcPath) {
+  const fd = await fs.open(srcPath, "r");
+  const header = Buffer.alloc(3);
+  await fd.read(header, 0, 3, 0);
+  await fd.close();
+  if (isMp3Buffer(header)) {
     return { path: srcPath, cleanup: null };
   }
 
   const ffmpegRaw = String(process.env.FFMPEG_BIN || "ffmpeg").trim() || "ffmpeg";
   const ffmpegBin = ffmpegRaw.includes(path.sep) ? resolveMaybeRelative(ffmpegRaw) : ffmpegRaw;
-  const outPath = path.join(TMP_DIR, `diar-${Date.now()}-${crypto.randomUUID()}.wav`);
+  const outPath = path.join(TMP_DIR, `gemini-${Date.now()}-${crypto.randomUUID()}.mp3`);
   await fs.mkdir(TMP_DIR, { recursive: true });
   try {
-    await runCommand(ffmpegBin, ["-y", "-i", srcPath, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", outPath]);
+    await runCommand(ffmpegBin, ["-y", "-i", srcPath, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k", outPath]);
+    console.log(`[gemini] Conversion MP3 réussie : ${path.basename(srcPath)} → ${path.basename(outPath)}`);
     return {
       path: outPath,
       cleanup: async () => {
@@ -137,7 +151,7 @@ async function ensureWavForDiarization(srcPath) {
     };
   } catch (err) {
     console.warn(
-      "[diarization] ffmpeg conversion to WAV failed — install ffmpeg in PATH or set FFMPEG_BIN. Error:",
+      "[gemini] ffmpeg conversion to MP3 failed — install ffmpeg in PATH or set FFMPEG_BIN. Error:",
       String(err?.message || err)
     );
     return { path: srcPath, cleanup: null };
@@ -198,10 +212,17 @@ function parseJsonLoose(text) {
     return JSON.parse(raw);
   } catch {
     const block = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-    if (block) return JSON.parse(block);
+    if (block) { try { return JSON.parse(block.trim()); } catch {} }
+    const arrStart = raw.indexOf("[");
+    const arrEnd = raw.lastIndexOf("]");
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      try { return JSON.parse(raw.slice(arrStart, arrEnd + 1)); } catch {}
+    }
     const first = raw.indexOf("{");
     const last = raw.lastIndexOf("}");
-    if (first >= 0 && last > first) return JSON.parse(raw.slice(first, last + 1));
+    if (first >= 0 && last > first) {
+      try { return JSON.parse(raw.slice(first, last + 1)); } catch {}
+    }
     throw new Error("Invalid JSON payload");
   }
 }
@@ -474,18 +495,51 @@ function normalizeGeminiSttSegmentsFromPayload(parsed) {
   return out;
 }
 
+function splitLongSegmentsBackend(segments, maxDurationSec = 8) {
+  if (!Array.isArray(segments) || !segments.length) return segments;
+  const out = [];
+  for (const seg of segments) {
+    const start = Number(seg.start) || 0;
+    const end   = Number(seg.end)   || start;
+    const dur   = end - start;
+    if (dur <= maxDurationSec) { out.push(seg); continue; }
+    const words = String(seg.text || "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) { out.push(seg); continue; }
+    const nParts  = Math.min(words.length, Math.ceil(dur / maxDurationSec));
+    if (nParts <= 1) { out.push(seg); continue; }
+    const partDur   = dur / nParts;
+    const baseSize  = Math.floor(words.length / nParts);
+    const remainder = words.length % nParts;
+    let wordIdx = 0;
+    for (let i = 0; i < nParts; i++) {
+      const count = baseSize + (i < remainder ? 1 : 0);
+      const partWords = words.slice(wordIdx, wordIdx + count);
+      wordIdx += count;
+      if (!partWords.length) continue;
+      out.push({
+        start:   start + i * partDur,
+        end:     start + (i + 1) * partDur,
+        text:    partWords.join(" "),
+        speaker: seg.speaker || undefined,
+      });
+    }
+  }
+  return out;
+}
+
 async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
   const key = String(apiKey || "").trim();
   if (!key) throw new Error("Gemini STT requires API key (header x-gemini-api-key or GEMINI_API_KEY)");
   const model = String(modelId || GEMINI_MODEL).trim() || GEMINI_MODEL;
   const speakerDiarizationPass = Boolean(options?.speakerDiarizationPass);
+  const customSystemPrompt = options?.systemPrompt ? String(options.systemPrompt) : null;
 
-  const wavForGemini = await ensureWavForDiarization(filePath);
+  const wavForGemini = await ensureMp3ForGemini(filePath);
   let cleanupWav = wavForGemini.cleanup;
   try {
     const buf = await fs.readFile(wavForGemini.path);
     const b64 = buf.toString("base64");
-    const systemPrompt = speakerDiarizationPass
+    const systemPrompt = customSystemPrompt ? customSystemPrompt : speakerDiarizationPass
       ? "Tu transcris l'intégralité de l'audio en français : chaque parole audible de chaque personne, " +
         "y compris les longs monologues et les voix fortes ou proches du micro — rien ne doit être omis ni résumé.\n" +
         "En parallèle, indique qui parle (Speaker 1, Speaker 2, etc.) : un nouveau segment à chaque changement de locuteur.\n" +
@@ -512,7 +566,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
     const baseParts = [
       {
         inlineData: {
-          mimeType: "audio/wav",
+          mimeType: "audio/mp3",
           data: b64,
         },
       },
@@ -567,6 +621,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         const hint = geminiResponseErrorHint(data);
         throw new Error(`Gemini STT empty response${hint ? ` (${hint})` : ""}`);
       }
+      console.log("[gemini] STT raw response (first 500 chars):", text.slice(0, 500));
       const parsed = parseJsonLoose(text);
       return normalizeGeminiSttSegmentsFromPayload(parsed);
     } finally {
@@ -707,4 +762,4 @@ async function handleFreeTranscription(req, uploadedPath) {
   };
 }
 
-module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini };
+module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini, splitLongSegmentsBackend };

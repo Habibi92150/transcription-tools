@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:status.cloud.google.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(powershell.exe -Command \"Get-Content 'C:\\\\Users\\\\adamz\\\\Downloads\\\\Séquence 424_transcription_corrigee_viapremium \\(6\\).srt'\")",
+      "Bash(powershell.exe -Command 'Get-ChildItem '\\\\''C:\\\\Users\\\\adamz\\\\Downloads\\\\'\\\\'' | Where-Object { $_.Name -like '\\\\''*viapremium*6*'\\\\'' } | Select-Object FullName')",
+      "Bash(powershell.exe -Command \"Get-Content 'C:\\\\Users\\\\adamz\\\\Downloads\\\\Se\\\\u0301quence 424_transcription_corrigee_viapremium \\(6\\).srt' -Encoding UTF8\")",
+      "Bash(powershell.exe -Command '$f = Get-ChildItem '\\\\''C:\\\\Users\\\\adamz\\\\Downloads\\\\'\\\\'' | Where-Object { $_.Name -like '\\\\''*viapremium*6*'\\\\'' } | Select-Object -First 1; Get-Content $f.FullName -Encoding UTF8')",
+      "Bash(where ffmpeg:*)",
+      "Bash(powershell.exe -Command \"Get-Command ffmpeg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\' -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue | Select-Object -First 3 FullName\")",
+      "Bash(powershell.exe -Command \"winget list ffmpeg 2>&1\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Program Files\\\\ffmpeg' -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue | Select-Object FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz' -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue | Select-Object -First 3 FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\ProgramData\\\\chocolatey', 'C:\\\\tools', 'C:\\\\ffmpeg', 'C:\\\\Program Files\\\\ffmpeg', 'C:\\\\Program Files \\(x86\\)\\\\ffmpeg' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 3 FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Recurse -Filter 'ffmpeg.exe' | Select-Object FullName\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\ffmpeg-8.1-full_build\\\\bin' | Select-Object Name\")"
+    ]
+  }
+}
