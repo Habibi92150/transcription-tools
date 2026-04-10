@@ -244,7 +244,7 @@
       } catch {
         if (errEl) {
           errEl.textContent =
-            "Impossible de contacter le serveur. En local, lance le backend (port 8787) ou enregistre l’URL du serveur dans les reglages.";
+            "Impossible de contacter le serveur. En local, lance le backend (port 8787) ou enregistre l’URL du serveur dans les réglages.";
           errEl.classList.remove("hidden");
         }
       } finally {
@@ -360,10 +360,13 @@
   if (reviewWordingGenerateBtn) {
     reviewWordingGenerateBtn.addEventListener("click", () => {
       if (!isPremiumSessionUnlocked()) {
-        showToast("Cette fonctionnalite est reservee au tier Premium.");
+        showToast("Cette fonctionnalité est réservée au tier Premium.");
         return;
       }
-      generateWordingsFromExcerpt();
+      generateWordingsFromExcerpt().catch((err) => {
+        showToast("Erreur lors de la génération des wordings. Vérifiez votre clé Groq.");
+        console.error("[wording]", err);
+      });
     });
   }
   if (reviewWordingList) {
@@ -459,14 +462,14 @@
 
   // ========= Run =========
   runBtn.onclick = async () => {
+    if (runBtn.disabled) return; // garde anti double-clic
+    runBtn.disabled = true;
     setInfoStep(1);
     syncPremiumKeyOnBlur();
     const apiKey = apiKeyInput.value.trim();
     const localBackendMode = isLocalModeEnabled();
     const backendUrl = getBackendUrl();
-    if (!selectedFile) return;
-
-    runBtn.disabled = true;
+    if (!selectedFile) { runBtn.disabled = false; return; }
     if (pickBtn) pickBtn.disabled = true;
     extractAudio.disabled = true;
     actionRow.hidden = true;

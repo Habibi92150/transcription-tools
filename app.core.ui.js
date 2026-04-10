@@ -222,20 +222,29 @@
   async function loadFfmpeg() {
     if (!canUseFfmpegExtract()) throw new Error("Extraction impossible en accès local direct.");
     if (ffmpegBundlePromise) return ffmpegBundlePromise;
-    ffmpegBundlePromise = (async () => {
-      const [{ FFmpeg }, { fetchFile }] = await Promise.all([
-        import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js"),
-        import("https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js"),
-      ]);
-      const ffmpeg = new FFmpeg();
-      ffmpeg.on("log", () => {});
-      await ffmpeg.load({
-        classWorkerURL: assetUrl("worker.js"),
-        coreURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
-        wasmURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm",
-      });
-      return { ffmpeg, fetchFile };
-    })();
+    const loadTimeout = new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Chargement FFmpeg trop long. Vérifiez votre connexion ou désactivez l'extraction audio.")),
+        30_000
+      )
+    );
+    ffmpegBundlePromise = Promise.race([
+      (async () => {
+        const [{ FFmpeg }, { fetchFile }] = await Promise.all([
+          import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js"),
+          import("https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js"),
+        ]);
+        const ffmpeg = new FFmpeg();
+        ffmpeg.on("log", () => {});
+        await ffmpeg.load({
+          classWorkerURL: assetUrl("worker.js"),
+          coreURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
+          wasmURL: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm",
+        });
+        return { ffmpeg, fetchFile };
+      })(),
+      loadTimeout,
+    ]);
     return ffmpegBundlePromise;
   }
 
@@ -298,6 +307,8 @@
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.setRequestHeader("Authorization", `Bearer ${apiKey}`);
+      xhr.timeout = 120_000;
+      xhr.ontimeout = () => reject(new Error("NETWORK_ERROR"));
       const notifyUploadDone = wireXhrUploadComplete(xhr, onProgress, onComplete);
       xhr.onload = () => {
         notifyUploadDone();
@@ -327,6 +338,8 @@
       for (const [k, v] of Object.entries(extraHeaders || {})) {
         if (v) xhr.setRequestHeader(k, String(v));
       }
+      xhr.timeout = 300_000;
+      xhr.ontimeout = () => reject(new Error("NETWORK_ERROR"));
       const notifyUploadDone = wireXhrUploadComplete(xhr, onProgress, onComplete);
       xhr.onload = () => {
         notifyUploadDone();

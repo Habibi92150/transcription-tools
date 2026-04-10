@@ -94,7 +94,10 @@ function parseGroqCleanupHints() {
 const TMP_DIR = path.join(os.tmpdir(), "transcription-tools");
 
 const app = express();
-app.use(cors());
+const _corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : null;
+app.use(cors(_corsOrigins ? { origin: _corsOrigins } : {}));
 
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
@@ -572,12 +575,53 @@ function applyFrenchContractionRules(input) {
 function applyFrenchNegationRules(input) {
   let text = String(input || "");
   if (!text) return text;
-  text = text.replace(/\b([Cc])['’]est\s+pas\b/g, (_m, c) => `${capitalizeLike(c, "ce")} n'est pas`);
-  text = text.replace(/\b([Jj])['’]ai\s+pas\b/g, (_m, j) => `${capitalizeLike(j, "je")} n'ai pas`);
-  text = text.replace(/\b([Oo])n\s+a\s+pas\b/g, (_m, o) => `${capitalizeLike(o, "on")} n'a pas`);
-  text = text.replace(/\b([Ii])l\s+y\s+a\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n'y a pas`);
-  text = text.replace(/\b([Ii])l\s+est\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n'est pas`);
-  text = text.replace(/\b([Ee])lle\s+est\s+pas\b/g, (_m, e) => `${capitalizeLike(e, "elle")} n'est pas`);
+
+  // --- Patterns spécifiques (prioritaires) ---
+  text = text.replace(/\b([Cc])[‘’]est\s+pas\b/g, (_m, c) => `${capitalizeLike(c, "ce")} n’est pas`);
+  text = text.replace(/\b([Jj])[‘’]ai\s+pas\b/g, (_m, j) => `${capitalizeLike(j, "je")} n’ai pas`);
+  text = text.replace(/\b([Oo])n\s+a\s+pas\b/g, (_m, o) => `${capitalizeLike(o, "on")} n’a pas`);
+  text = text.replace(/\b([Ii])l\s+y\s+a\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n’y a pas`);
+  text = text.replace(/\b([Ii])l\s+est\s+pas\b/g, (_m, i) => `${capitalizeLike(i, "il")} n’est pas`);
+  text = text.replace(/\b([Ee])lle\s+est\s+pas\b/g, (_m, e) => `${capitalizeLike(e, "elle")} n’est pas`);
+
+  // --- Sujet + verbe commençant par voyelle + pas → n’[verbe] pas ---
+  text = text.replace(/\b([Jj])e\s+(ai|aime|arrive|avais|aurais|en|entends|oublie|hésite|imagine)\s+pas\b/g,
+    (_m, j, v) => `${capitalizeLike(j, "je")} n’${v} pas`);
+  text = text.replace(/\b([Tt])u\s+(as|es|aimes|arrives|avais|aurais|en|entends|oublies|hésites|imagines)\s+pas\b/g,
+    (_m, t, v) => `${capitalizeLike(t, "tu")} n’${v} pas`);
+  text = text.replace(/\b([Ii])l\s+(a|avait|aura|aurait|en|entend|oublie|hésite|imagine)\s+pas\b/g,
+    (_m, i, v) => `${capitalizeLike(i, "il")} n’${v} pas`);
+  text = text.replace(/\b([Ee])lle\s+(a|avait|aura|aurait|en|entend|oublie|hésite|imagine)\s+pas\b/g,
+    (_m, e, v) => `${capitalizeLike(e, "elle")} n’${v} pas`);
+  text = text.replace(/\b([Oo])n\s+(est|avait|aura|aurait|en|entend|oublie|hésite|imagine)\s+pas\b/g,
+    (_m, o, v) => `${capitalizeLike(o, "on")} n’${v} pas`);
+
+  // --- Sujet + verbe commençant par consonne + pas → ne [verbe] pas ---
+  const vConsJe = "suis|sais|veux|peux|fais|dis|vais|dois|crois|trouve|comprends|connais|vois|mets|pense|reste|sors|pars|mange|dors|prends|regarde|parle|joue|bouge|tombe|monte|descends|reviens|rentre|travaille";
+  text = text.replace(new RegExp(`\\b([Jj])e\\s+(${vConsJe})\\s+pas\\b`, "g"),
+    (_m, j, v) => `${capitalizeLike(j, "je")} ne ${v} pas`);
+  const vConsTu = "sais|veux|peux|fais|dis|vas|dois|crois|trouves|comprends|connais|vois|mets|penses|restes|sors|pars|manges|dors|prends|regardes|parles|joues|bouges|tombes|montes|descends|reviens|rentres|travailles";
+  text = text.replace(new RegExp(`\\b([Tt])u\\s+(${vConsTu})\\s+pas\\b`, "g"),
+    (_m, t, v) => `${capitalizeLike(t, "tu")} ne ${v} pas`);
+  const vConsIl = "sait|veut|peut|fait|dit|va|doit|croit|trouve|comprend|connaît|voit|met|pense|reste|sort|part|mange|dort|prend|regarde|parle|joue|bouge|tombe|monte|descend|revient|rentre|travaille";
+  text = text.replace(new RegExp(`\\b([Ii])l\\s+(${vConsIl})\\s+pas\\b`, "g"),
+    (_m, i, v) => `${capitalizeLike(i, "il")} ne ${v} pas`);
+  text = text.replace(new RegExp(`\\b([Ee])lle\\s+(${vConsIl})\\s+pas\\b`, "g"),
+    (_m, e, v) => `${capitalizeLike(e, "elle")} ne ${v} pas`);
+  text = text.replace(new RegExp(`\\b([Oo])n\\s+(${vConsIl})\\s+pas\\b`, "g"),
+    (_m, o, v) => `${capitalizeLike(o, "on")} ne ${v} pas`);
+
+  // --- ça + verbe + pas → ça ne [verbe] pas ---
+  text = text.replace(/\b([Çç]a|[Cc]a)\s+(fait|marche|va|change|sert|suffit|compte|vaut|dure|passe|existe|fonctionne|bouge|tient|reste|revient|rentre)\s+pas\b/g,
+    (_m, s, v) => `${capitalizeLike(s, "ça")} ne ${v} pas`);
+
+  // --- ils/elles + verbe + pas ---
+  const vConsPluriel = "ont|sont|savent|veulent|peuvent|font|disent|vont|doivent|croient|trouvent|comprennent|connaissent|voient|mettent|pensent|restent|sortent|partent|mangent|dorment|prennent|regardent|parlent|jouent|bougent|tombent|montent|descendent|reviennent|rentrent|travaillent";
+  text = text.replace(new RegExp(`\\b([Ii])ls\\s+(${vConsPluriel})\\s+pas\\b`, "g"),
+    (_m, i, v) => `${capitalizeLike(i, "ils")} ne ${v} pas`);
+  text = text.replace(new RegExp(`\\b([Ee])lles\\s+(${vConsPluriel})\\s+pas\\b`, "g"),
+    (_m, e, v) => `${capitalizeLike(e, "elles")} ne ${v} pas`);
+
   return text;
 }
 
@@ -637,13 +681,27 @@ async function cleanSegmentsWithGroq(segments, groqApiKey) {
       : "";
 
   const systemPrompt =
-    "Tu corriges des segments de transcription FR (sous-titres). Corrige orthographe, accents, accords, apostrophes, contractions et ponctuation. " +
-    "Rétablis la négation (ne/n') uniquement quand c'est évident et non ambigu (ex: c'est pas -> ce n'est pas). " +
-    "Noms propres et personnalités: quand le STT produit une forme phonétiquement proche d'un nom connu (sport, médias, politique) et que transcriptPreview ou le contexte local le rend plausible, corrige vers l'orthographe standard (ex: prénom/nom confondus par homophonie, Matuidi vs Matfidi, Blaise vs Isabelle dans un contexte foot/conjoint). " +
-    "Si le contexte reste ambigu, ne invente pas de nom: garde la forme la plus sûre. " +
-    "Ne paraphrase pas. Ne résume pas. Ne change pas le sens. Ne supprime aucun segment. Ne ajoute pas de tirets de locuteur. " +
+    "Tu corriges des segments STT français. INTERDIT: fusionner 2 segments, supprimer un segment, paraphraser, compléter une phrase inachevée, modifier les nombres, ajouter des speaker/timestamps. " +
+    "CONVERSIONS OBLIGATOIRES (toujours): " +
+    "chuis/j'suis→je suis | ch'ais/chais/chai/j'sais→je sais | " +
+    "y'a/ya/ia→il y a | t'as→tu as | t'es→tu es | t'vois→tu vois | t'sais→tu sais | t'fais→tu fais | t'aurais→tu aurais | " +
+    "j'vais→je vais | j'veux→je veux | j'peux→je peux | j'comprends→je comprends | j'connais→je connais | j'dois→je dois | " +
+    "j'men/j'm'en→je m'en | j'te→je te | ch'veux→je veux | " +
+    "v'là/vlà/vla→voilà | pi/pis (conj.)→puis | s'ra→sera | s'rait→serait | " +
+    "p't-être/p'têtre/ptêtre/ptetre/peut-êt'→peut-être | p'tit/p'tite→petit/petite | " +
+    "pasque/paske/pasqu'/pace que/parc que→parce que | " +
+    "c'est-à-dir'→c'est-à-dire | tout'suite/tout suite→tout de suite | " +
+    "si il→s'il | si ils→s'ils | " +
+    "ÉLISIONS MANQUANTES: j ai→j'ai | c est→c'est | d accord→d'accord | l enfant→l'enfant | s il→s'il | n est→n'est | qu il→qu'il | m a→m'a | l a→l'a. " +
+    "NÉGATION: rétablis TOUJOURS ne/n' — ex: 'je sais pas'→'je ne sais pas', 'tu peux pas'→'tu ne peux pas', 'il veut pas'→'il ne veut pas', 'ça marche pas'→'ça ne marche pas'. " +
+    "CONSERVER TELS QUELS: ouais, nan, bah, ben (≠bien), hein, quoi (fin phrase), euh, bon, enfin, allez, genre, en mode, là (marqueur), voilà (marqueur), wesh, grave, ouf, chelou, kiffer. " +
+    "HOMOPHONES (contexte syntaxique): a/à | et/est (est=être, et=conjonction) | ou/où | on/ont | son/sont | ces/ses/c'est/s'est | la/là | sa/ça | se/ce | " +
+    "peut(il)/peux(je,tu) | veut(il)/veux(je,tu) | prend(il)/prends(je,tu) | quand/qu'en | dont/donc. " +
+    "ORTHOGRAPHE: accents manquants, accords participe passé COD antéposé, noms propres si transcriptPreview confirme. " +
+    "Ponctuation: virgule avant mais/car/donc/or, point en fin de segment si phrase terminée. " +
+    "Utilise contextBefore/contextAfter pour cohérence inter-segments. " +
     hintsBlock +
-    " Réponds uniquement en JSON valide avec la clé segments: tableau {i, text} pour chaque index.";
+    " JSON: {\"segments\":[{\"i\":number,\"text\":string},...]} — même nombre, mêmes index.";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
@@ -659,10 +717,16 @@ async function cleanSegmentsWithGroq(segments, groqApiKey) {
         {
           role: "user",
           content:
-            "Corrige ces segments et garde exactement les mêmes index (0..n-1). " +
-            "N'ajoute pas de labels speaker. N'ajoute pas de timestamp. " +
-            "Le champ transcriptPreview sert uniquement au contexte thématique; ne le recopie pas dans les segments. " +
-            "JSON schema: {\"segments\":[{\"i\":number,\"text\":string},...]}\n" +
+            "Corrige ces segments. Mêmes index (0..n-1), même nombre, pas de speaker ni timestamp. transcriptPreview = contexte uniquement. " +
+            "BONS exemples: " +
+            "'chais pas du tout'→'je ne sais pas du tout' | 'ya pas eu de souci'→'il n'y a pas eu de souci' | " +
+            "'a cause de lui'→'à cause de lui' | 'il et parti hier'→'il est parti hier' | " +
+            "'ptêtre demain'→'peut-être demain' | 'ouais bah nan'→'ouais bah nan' (inchangé) | " +
+            "'paske il voulait pas'→'parce qu'il ne voulait pas' | 'tu peut pas'→'tu ne peux pas' | " +
+            "'j ai pas compris'→'je n'ai pas compris' | 'le truc c est que'→'le truc c'est que'. " +
+            "MAUVAIS exemples (NE JAMAIS FAIRE): " +
+            "fusionner 2 segments | laisser 'chais/ya/ptêtre/pasque/j ai' dans la sortie | oublier le 'ne' de négation. " +
+            "JSON: {\"segments\":[{\"i\":number,\"text\":string}]}\n" +
             JSON.stringify(payload),
         },
       ],
@@ -738,15 +802,122 @@ async function cleanSegmentsWithGemini(segments, geminiApiKey) {
       ? `Indices fournis pour cette émission (priorité si une forme proche apparaît): ${hints.join(" | ")}.`
       : "";
   const systemPrompt =
-    "Tu corriges des segments de transcription FR (sous-titres). Corrige uniquement orthographe, accents, accords, apostrophes, contractions et ponctuation. " +
-    "Rétablis la négation (ne/n') seulement quand c'est évident et sans ambiguïté. " +
-    "Noms propres: corrige uniquement quand le contexte local + transcriptPreview le rendent plausible. " +
-    "Ne paraphrase pas, ne résume pas, ne change pas le sens. Ne modifie jamais l'ordre des segments. " +
-    "Réponds uniquement en JSON valide: {\"segments\":[{\"i\":number,\"text\":string},...]} " +
-    hintsBlock;
+    "Tu es correcteur expert en orthographe française et transcription de parole courante. " +
+    "Tu corriges des segments STT sans jamais reformuler, résumer ou changer le sens.\n\n" +
+
+    "## RÈGLES ABSOLUES\n" +
+    "- Ne fusionne JAMAIS deux segments en un seul\n" +
+    "- Ne supprime aucun segment, ne modifie pas les index ni l'ordre\n" +
+    "- Ne paraphrase pas, ne complète pas une phrase inachevée\n" +
+    "- Ne modifie pas les nombres (ni chiffres, ni lettres, ni quatre-vingts)\n" +
+    "- Ne corrige pas les noms de personnes/marques si non confirmés par transcriptPreview ou hints\n" +
+    "- Supprime les hallucinations STT connues (ex: 'Merci d\\'avoir regardé', 'Sous-titrage ST' en fin d'audio)\n\n" +
+
+    "## 1. CONVERSIONS PHONÉTIQUES — OBLIGATOIRES, toujours, sans exception\n" +
+    "Ces formes phonétiques ne doivent JAMAIS apparaître dans la sortie :\n\n" +
+    "**Pronoms + verbe (élisions orales) :**\n" +
+    "- chuis / j'suis → je suis\n" +
+    "- ch'ais / chais / chai / j'sais / chais pas → je sais / je ne sais pas\n" +
+    "- ch'veux → je veux\n" +
+    "- j'vais → je vais | j'veux → je veux | j'peux → je peux\n" +
+    "- j'comprends → je comprends | j'connais → je connais | j'dois → je dois\n" +
+    "- j'men / j'm'en → je m'en | j'te / j't'en → je te / je t'en\n" +
+    "- t'as → tu as | t'es → tu es | t'vois → tu vois\n" +
+    "- t'sais → tu sais | t'fais → tu fais | t'aurais → tu aurais\n" +
+    "- t'inquiètes (isolé) → ne t'inquiète pas\n\n" +
+
+    "**Contractions adverbiales :**\n" +
+    "- y'a / ya / ia → il y a (TOUJOURS)\n" +
+    "- v'là / vlà / vla → voilà\n" +
+    "- pi / pis (conjonction) → puis\n" +
+    "- s'ra → sera | s'rait → serait | s'raient → seraient\n" +
+    "- p't-être / p'têtre / p'tetre / ptêtre / ptetre / peut-êt' → peut-être\n" +
+    "- p'tit / p'tite / p'tits → petit / petite / petits\n\n" +
+
+    "**Conjonctions et locutions :**\n" +
+    "- pasque / paske / pasqu' / pace que / parc que → parce que\n" +
+    "- c'est-à-dir' / c'est à dir' → c'est-à-dire\n" +
+    "- tout'suite / tout suite → tout de suite\n" +
+    "- au fur et mesure → au fur et à mesure\n" +
+    "- si il → s'il | si ils → s'ils (élision obligatoire)\n\n" +
+
+    "**Élisions manquantes (espace parasite du STT) :**\n" +
+    "- j ai → j'ai | c est → c'est | d accord → d'accord | l enfant → l'enfant\n" +
+    "- s il → s'il | n est → n'est | qu il → qu'il | m a → m'a | l a → l'a\n" +
+    "- NOTE: la, ma, ta, sa (possessifs) ne s'élident PAS\n\n" +
+
+    "## 2. NÉGATION — TOUJOURS rétablir ne/n'\n" +
+    "La négation complète doit TOUJOURS être rétablie, sans exception :\n" +
+    "- je sais pas → je ne sais pas\n" +
+    "- tu peux pas → tu ne peux pas\n" +
+    "- il veut pas → il ne veut pas\n" +
+    "- on peut pas → on ne peut pas\n" +
+    "- ça marche pas → ça ne marche pas\n" +
+    "- ils font pas → ils ne font pas\n" +
+    "- elle comprend pas → elle ne comprend pas\n" +
+    "- je vois pas → je ne vois pas\n" +
+    "- c'est pas → ce n'est pas\n" +
+    "Règle générale: [sujet] [verbe] pas → [sujet] ne/n' [verbe] pas\n\n" +
+
+    "## 3. MARQUEURS DISCURSIFS — CONSERVER TELS QUELS\n" +
+    "Ne PAS corriger ces formes, elles sont intentionnelles :\n" +
+    "ouais, nan, bah, ben (≠ bien !), hein, quoi (fin de phrase), euh, bon, enfin, allez, " +
+    "voilà (marqueur), quand même, genre (intensifieur), en mode, là (ponctuant: 'tu vois là'), " +
+    "grave (= vraiment), ouf, chelou, wesh, kiffer, style, carrément, trop (intensifieur), " +
+    "du coup, en fait, en vrai, tu vois, tu sais, je veux dire\n\n" +
+
+    "## 4. HOMOPHONES — corriger selon contexte syntaxique\n" +
+    "**Prépositions / verbes :**\n" +
+    "- a / à : 'a' = verbe avoir 3ème pers. (il a dit) ; 'à' = préposition (à Paris, à cause, grâce à)\n" +
+    "- et / est : 'et' = conjonction entre 2 éléments ; 'est' = verbe être (il est, c'est, qui est)\n" +
+    "- ou / où : 'ou' = alternative ; 'où' = lieu/temps (là où, le jour où)\n\n" +
+    "**Déterminants / pronoms :**\n" +
+    "- on / ont : 'on' = pronom sujet ; 'ont' = avoir 3ème pers. pluriel\n" +
+    "- son / sont : 'son' = possessif ; 'sont' = être 3ème pers. pluriel\n" +
+    "- ces / ses / c'est / s'est / s'était\n" +
+    "- la / là | sa / ça (ça = pronom démonstratif ; sa = possessif féminin)\n" +
+    "- se / ce : 'se' avant verbe pronominal ; 'ce' = démonstratif\n" +
+    "- ma / m'a | ta / t'a | si / s'y | ni / n'y | quand / qu'en | dont / donc\n\n" +
+    "**Conjugaison — accord avec la personne du sujet :**\n" +
+    "- je/tu peux (x) vs il/elle/on peut (t)\n" +
+    "- je/tu veux (x) vs il/elle/on veut (t)\n" +
+    "- je/tu prends (ds) vs il/elle/on prend (d)\n" +
+    "- je/tu comprends vs il/elle/on comprend\n" +
+    "- je/tu vois vs il/elle/on voit\n" +
+    "- je/tu fais vs il/elle/on fait\n" +
+    "- je/tu dis vs il/elle/on dit\n\n" +
+
+    "## 5. ORTHOGRAPHE AVANCÉE\n" +
+    "- Accents manquants (é, è, ê, à, ù, ç, î, ô, â, û, ë, ï)\n" +
+    "- Élisions obligatoires devant voyelle/h muet : j', l', d', m', n', c', s', qu'\n" +
+    "- Accord du participe passé avec le COD antéposé\n" +
+    "- Majuscule en début de segment ; minuscule ailleurs sauf noms propres\n" +
+    "- Noms propres : corrige si transcriptPreview/contexte confirme la forme phonétique\n" +
+    "- Ponctuation : virgule avant mais/car/donc/or ; point si fin de phrase\n\n" +
+
+    "## 6. CONTEXTE\n" +
+    "- transcriptPreview : thème global — ne pas recopier\n" +
+    "- contextBefore / contextAfter : cohérence locale (noms propres, termes)\n" +
+    "- hints : noms/sujets prioritaires\n" +
+    hintsBlock +
+    "\n\nJSON UNIQUEMENT : {\"segments\":[{\"i\":number,\"text\":string},...]} — exactement le même nombre, mêmes index.";
   const userPrompt =
-    "Corrige ces segments et conserve strictement les mêmes index. " +
-    "N'ajoute pas de speaker ni de timestamps.\n" +
+    "Corrige ces segments. Conserve STRICTEMENT les mêmes index et le même nombre d'objets. Pas de speaker ni timestamps.\n\n" +
+    "EXEMPLES CORRECTS :\n" +
+    "- {i:0, 'chuis arrivé en retard'} → {i:0, 'je suis arrivé en retard'}\n" +
+    "- {i:1, 'ya pas eu de souci'} → {i:1, 'il n'y a pas eu de souci'}\n" +
+    "- {i:2, 'a cause de ça'} → {i:2, 'à cause de ça'}\n" +
+    "- {i:3, 'il et parti hier soir'} → {i:3, 'il est parti hier soir'}\n" +
+    "- {i:4, 'ptêtre la semaine prochaine'} → {i:4, 'peut-être la semaine prochaine'}\n" +
+    "- {i:5, 'ouais bah nan'} → {i:5, 'ouais bah nan'} (marqueurs conservés)\n" +
+    "- {i:6, 'paske il voulait pas'} → {i:6, 'parce qu'il ne voulait pas'}\n" +
+    "- {i:7, 'tu peut pas faire ça'} → {i:7, 'tu ne peux pas faire ça'}\n" +
+    "- {i:8, 'j ai pas compris'} → {i:8, 'je n'ai pas compris'}\n" +
+    "- {i:9, 'ça marche pas du tout'} → {i:9, 'ça ne marche pas du tout'}\n\n" +
+    "ERREURS À NE JAMAIS FAIRE :\n" +
+    "- Fusionner 2 segments en 1\n" +
+    "- Laisser 'chais', 'ya', 'ptêtre', 'pasque', 'j ai' dans la sortie\n" +
+    "- Oublier le 'ne/n'' dans la négation\n\n" +
     JSON.stringify(payload);
 
   const model = GEMINI_CLEANUP_MODEL;
@@ -1462,7 +1633,7 @@ function validatePremiumToken(token) {
 app.post("/api/transcribe", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   try {
@@ -1585,7 +1756,7 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
 app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   let segmentsIn;
@@ -1635,7 +1806,7 @@ app.post("/api/align-speakers", upload.single("file"), async (req, res) => {
 app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
   if (!uploadedPath) {
-    return res.status(400).json({ error: "No file provided" });
+    return res.status(400).json({ error: "Aucun fichier reçu. Veuillez sélectionner un fichier audio ou vidéo." });
   }
 
   try {
@@ -1713,9 +1884,14 @@ app.post("/api/episode-summary", upload.single("file"), async (req, res) => {
 });
 
 
-// Config publique pour le frontend
-app.get('/api/config', (_req, res) => {
-  res.json({ groqApiKey: process.env.GROQ_API_KEY || '', backendUrl: process.env.BACKEND_URL || '' });
+// Config pour le frontend — la clé Groq n'est retournée qu'avec un token premium valide
+app.get('/api/config', (req, res) => {
+  const premiumToken = String(req.headers["x-premium-token"] || "").trim();
+  const isPremium = validatePremiumToken(premiumToken);
+  res.json({
+    groqApiKey: isPremium ? (process.env.GROQ_API_KEY || '') : '',
+    backendUrl: process.env.BACKEND_URL || '',
+  });
 });
 
 app.post("/api/auth/premium", express.json(), (req, res) => {
@@ -1732,6 +1908,16 @@ app.post("/api/auth/premium", express.json(), (req, res) => {
   const hmac = crypto.createHmac("sha256", PREMIUM_SECRET).update(payload).digest("hex");
   const token = expiresAt + "." + hmac;
   return res.json({ token, expiresAt });
+});
+
+// Gestionnaire d'erreurs Multer (fichier trop volumineux, format refusé, etc.)
+app.use((err, _req, res, next) => {
+  if (err && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({
+      error: `Fichier trop volumineux. Taille maximale autorisée : ${MAX_FILE_MB} Mo.`,
+    });
+  }
+  next(err);
 });
 
 app.listen(PORT, async () => {
