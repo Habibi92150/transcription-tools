@@ -17,7 +17,8 @@
       "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 FullName\")",
       "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 FullName\")",
       "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Recurse -Filter 'ffmpeg.exe' | Select-Object FullName\")",
-      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\ffmpeg-8.1-full_build\\\\bin' | Select-Object Name\")"
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\adamz\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\ffmpeg-8.1-full_build\\\\bin' | Select-Object Name\")",
+      "Bash(powershell.exe -Command ':*)"
     ]
   }
 }
