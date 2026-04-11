@@ -4,9 +4,10 @@ const crypto = require("crypto");
 const PREMIUM_SECRET = String(process.env.PREMIUM_SECRET || "").trim();
 const PREMIUM_PIN    = String(process.env.PREMIUM_PIN    || "").trim();
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || "").trim();
-const GEMINI_MODEL   = String(process.env.GEMINI_MODEL   || "gemini-2.5-flash").trim();
+const GEMINI_MODEL          = String(process.env.GEMINI_MODEL          || "gemini-2.5-pro").trim();
+const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash").trim();
 
-const { transcribeWithGemini, cleanSegmentsWithGemini, splitLongSegmentsBackend } = require("./gratuit");
+const { transcribeWithGemini, cleanSegmentsWithGemini, splitLongSegmentsBackend, resolveSegmentOverlaps } = require("./gratuit");
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -73,11 +74,20 @@ const PREMIUM_STT_SYSTEM_PROMPT =
 async function handlePremiumTranscription(req, uploadedPath) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY manquant dans .env");
 
-  let segments = splitLongSegmentsBackend(
-    await transcribeWithGemini(uploadedPath, GEMINI_API_KEY, null, {
-      systemPrompt: PREMIUM_STT_SYSTEM_PROMPT,
-    })
-  );
+  const sttOptions = { systemPrompt: PREMIUM_STT_SYSTEM_PROMPT };
+  let usedModel = GEMINI_MODEL;
+  let segments;
+  try {
+    segments = resolveSegmentOverlaps(splitLongSegmentsBackend(
+      await transcribeWithGemini(uploadedPath, GEMINI_API_KEY, GEMINI_MODEL, sttOptions)
+    ));
+  } catch (err) {
+    console.warn(`[premium] STT échoué sur ${GEMINI_MODEL} (${String(err?.message || err).slice(0, 80)}) — fallback sur ${GEMINI_FALLBACK_MODEL}`);
+    usedModel = GEMINI_FALLBACK_MODEL;
+    segments = resolveSegmentOverlaps(splitLongSegmentsBackend(
+      await transcribeWithGemini(uploadedPath, GEMINI_API_KEY, GEMINI_FALLBACK_MODEL, sttOptions)
+    ));
+  }
 
   if (GEMINI_API_KEY) {
     try {
@@ -90,7 +100,7 @@ async function handlePremiumTranscription(req, uploadedPath) {
 
   return {
     segments,
-    meta: { stt: `gemini:${GEMINI_MODEL}`, premium: true },
+    meta: { stt: `gemini:${usedModel}`, premium: true },
   };
 }
 

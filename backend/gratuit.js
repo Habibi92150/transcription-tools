@@ -150,11 +150,7 @@ async function ensureMp3ForGemini(srcPath) {
       },
     };
   } catch (err) {
-    console.warn(
-      "[gemini] ffmpeg conversion to MP3 failed — install ffmpeg in PATH or set FFMPEG_BIN. Error:",
-      String(err?.message || err)
-    );
-    return { path: srcPath, cleanup: null };
+    throw new Error(`[gemini] Conversion MP3 impossible (installe ffmpeg ou configure FFMPEG_BIN) : ${String(err?.message || err)}`);
   }
 }
 
@@ -734,6 +730,41 @@ function normalizeGeminiSttSegmentsFromPayload(parsed) {
   throw new Error("Gemini STT: la réponse JSON doit être un tableau de segments");
 }
 
+/**
+ * Résout les chevauchements et garantit une durée minimale par segment.
+ * - Trie par start
+ * - Clip end si un segment déborde sur le suivant
+ * - Garantit une durée minimale de minDurationSec
+ */
+function resolveSegmentOverlaps(segments, minDurationSec = 0.5, maxSecPerWord = 3) {
+  if (!Array.isArray(segments) || !segments.length) return segments;
+  const sorted = [...segments].sort((a, b) => a.start - b.start);
+  for (let i = 0; i < sorted.length; i++) {
+    const seg = sorted[i];
+    const next = sorted[i + 1];
+    // Plafonner la durée selon le nombre de mots (évite les 20s sur "Parle lui")
+    const wordCount = String(seg.text || "").trim().split(/\s+/).filter(Boolean).length;
+    const maxDur = Math.max(minDurationSec, wordCount * maxSecPerWord);
+    if (seg.end - seg.start > maxDur) {
+      seg.end = seg.start + maxDur;
+    }
+    // Combler le gap vers le segment suivant
+    if (next && seg.end < next.start - 0.04) {
+      seg.end = next.start - 0.04;
+    }
+    // Garantir durée minimale
+    if (seg.end - seg.start < minDurationSec) {
+      seg.end = seg.start + minDurationSec;
+    }
+    // Clip si chevauchement avec le suivant
+    if (next && seg.end > next.start) {
+      const mid = next.start - 0.04; // 40ms de gap
+      seg.end = Math.max(seg.start + 0.1, mid);
+    }
+  }
+  return sorted;
+}
+
 function splitLongSegmentsBackend(segments, maxDurationSec = 8) {
   if (!Array.isArray(segments) || !segments.length) return segments;
   const out = [];
@@ -777,6 +808,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
   let cleanupWav = wavForGemini.cleanup;
   try {
     const buf = await fs.readFile(wavForGemini.path);
+    console.log(`[gemini] Envoi à l'API — fichier: ${wavForGemini.path} | taille: ${(buf.length / 1024 / 1024).toFixed(2)} Mo | modèle: ${model}`);
     const b64 = buf.toString("base64");
     const systemPrompt = customSystemPrompt ? customSystemPrompt : speakerDiarizationPass
       ? "Tu transcris l'intégralité de l'audio en français : chaque parole audible de chaque personne, " +
@@ -827,7 +859,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
     };
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GROQ_STT_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
     try {
       async function doFetch(body) {
         return fetch(url, {
@@ -862,7 +894,6 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         const hint = geminiResponseErrorHint(data);
         throw new Error(`Gemini STT empty response${hint ? ` (${hint})` : ""}`);
       }
-      console.log("[gemini] STT raw response (first 500 chars):", text.slice(0, 500));
       let parsed;
       try {
         parsed = parseJsonLoose(text);
@@ -1012,4 +1043,4 @@ async function handleFreeTranscription(req, uploadedPath) {
   };
 }
 
-module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini, splitLongSegmentsBackend };
+module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini, splitLongSegmentsBackend, resolveSegmentOverlaps };
