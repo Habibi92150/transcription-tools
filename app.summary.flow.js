@@ -346,7 +346,6 @@
 
   // init
   resetWordingState();
-  initPinGate();
   initNav();
   setEta(ETA_TRANSCRIBE);
   refreshRunButton();

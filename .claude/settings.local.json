@@ -12,7 +12,28 @@
       "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang ls-tree -r HEAD --name-only)",
       "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang ls-tree -r wipdia --name-only)",
       "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:backend/server.py)",
-      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:backend/requirements.txt)"
+      "Bash(git -C /c/dev/transcription-tools/.claude/worktrees/eloquent-jang show wipdia:backend/requirements.txt)",
+      "Bash(curl -s -X POST http://localhost:8787/api/auth/register -H \"Content-Type: application/json\" -d '{\"email\":\"test@test.com\",\"password\":\"password123\"}')",
+      "Bash(netstat -ano)",
+      "Bash(where ffmpeg:*)",
+      "Bash(powershell -Command \"Get-Command ffmpeg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell -Command \"\\(Get-ChildItem -Path 'C:\\\\Users\\\\robin\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages' -Filter 'ffmpeg*' -ErrorAction SilentlyContinue | Select-Object -First 1 FullName\\).FullName\")",
+      "Bash(powershell -Command \"Get-Command ffmpeg 2>&1 | Out-String\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\robin\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages' -Filter '*ffmpeg*' -ErrorAction SilentlyContinue | Select-Object FullName\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\' -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue -Depth 8 | Select-Object -First 5 FullName | Out-String\")",
+      "Bash(powershell -Command \"winget list ffmpeg 2>&1 | Out-String\")",
+      "Bash(powershell -Command \"winget install Gyan.FFmpeg --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\robin\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object FullName\")",
+      "Bash(powershell -Command \"\\(Get-ChildItem -Path 'C:\\\\Users\\\\robin\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe' -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1\\).FullName\")",
+      "Bash(powershell -Command \"Get-Process -Id 1300 -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle | Out-String\")",
+      "Bash(powershell -Command \"Stop-Process -Id 1300 -Force; Start-Sleep -Seconds 1; 'killed'\")",
+      "Bash(node backend/server.js)",
+      "Bash(curl -s http://localhost:8787/health)",
+      "Bash(\"/c/Users/robin/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe\" -version)",
+      "Bash(npm install:*)",
+      "Bash(powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(npx serve:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)"
     ]
   }
 }

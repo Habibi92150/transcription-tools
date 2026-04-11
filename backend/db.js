@@ -1,59 +1,44 @@
 "use strict";
-const fs     = require("fs");
-const path   = require("path");
-const crypto = require("crypto");
+const fs   = require("fs");
+const path = require("path");
 
 const DB_FILE = path.join(__dirname, "users.json");
 
-// ── Lecture / écriture ────────────────────────────────────────────────────────
-
 function loadDb() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } catch {
-    return { users: [], usage: {} };
-  }
+  try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); }
+  catch { return { users: [], usage: {} }; }
 }
 
 function saveDb(db) {
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
 }
 
-// ── Utilisateurs ──────────────────────────────────────────────────────────────
-
-function findUserByEmail(email) {
-  const key = String(email || "").toLowerCase().trim();
-  return loadDb().users.find((u) => u.email === key) || null;
-}
-
-function findUserById(id) {
-  return loadDb().users.find((u) => u.id === id) || null;
-}
+// ── Utilisateurs (Firebase UID) ───────────────────────────────────────────────
 
 /**
- * Crée un utilisateur et le persiste dans users.json.
- * @param {string} email
- * @param {string} passwordHash  - hash scrypt (format "salt:hex")
- * @param {"free"|"premium"} tier
+ * Retourne l'utilisateur correspondant au UID Firebase.
+ * Le crée avec tier "free" si absent (premier login).
  */
-function createUser(email, passwordHash, tier = "free") {
-  const db   = loadDb();
-  const user = {
-    id:           crypto.randomUUID(),
-    email:        String(email || "").toLowerCase().trim(),
-    passwordHash,
-    tier,
-    createdAt:    new Date().toISOString(),
-  };
-  db.users.push(user);
-  saveDb(db);
+function getOrCreateUser(uid, email = "") {
+  const db = loadDb();
+  let user = db.users.find((u) => u.id === uid);
+  if (!user) {
+    user = {
+      id:        uid,
+      email:     String(email || "").toLowerCase().trim(),
+      tier:      "free",
+      createdAt: new Date().toISOString(),
+    };
+    db.users.push(user);
+    saveDb(db);
+  }
   return user;
 }
 
 // ── Quota journalier ──────────────────────────────────────────────────────────
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  return new Date().toISOString().slice(0, 10);
 }
 
 function getUsageToday(userId) {
@@ -70,4 +55,4 @@ function incrementUsage(userId) {
   saveDb(db);
 }
 
-module.exports = { findUserByEmail, findUserById, createUser, getUsageToday, incrementUsage };
+module.exports = { getOrCreateUser, getUsageToday, incrementUsage };

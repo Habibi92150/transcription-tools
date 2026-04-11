@@ -191,7 +191,6 @@
       dzFileMeta.textContent = "";
     }
     syncExtractUi(selectedFile);
-    syncUploadKeyFields();
     refreshRunButton();
   }
 

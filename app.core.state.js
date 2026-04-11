@@ -218,23 +218,34 @@
   // ── Auth state ────────────────────────────────────────────────────────────────
   let currentUser = null; // { email, tier, usageToday, limit }
 
+  // Retourne le token en cache (valide jusqu'à 1h, Firebase refresh auto en fond)
   function getAuthToken() {
-    return localStorage.getItem(AUTH_TOKEN_KEY) || null;
+    return currentUser?.token || null;
+  }
+
+  // Obtient un token frais depuis Firebase (à utiliser avant les appels API longs)
+  async function getFreshAuthToken() {
+    const fb = window._firebase;
+    if (fb?.auth?.currentUser) {
+      const token = await fb.auth.currentUser.getIdToken();
+      if (currentUser) currentUser.token = token;
+      return token;
+    }
+    return currentUser?.token || null;
   }
 
   function setAuthUser(data) {
     currentUser = data;
-    if (data?.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+    // Pas de localStorage — Firebase gère la session en IndexedDB
     updateUserBanner();
     refreshRunButton?.();
   }
 
   function clearAuthUser() {
     currentUser = null;
-    localStorage.removeItem(AUTH_TOKEN_KEY);
     updateUserBanner();
-    showAuthModal("login");
     refreshRunButton?.();
+    // showAuthModal est appelé par onAuthStateChanged — pas ici
   }
 
   function updateUserBanner() {
@@ -276,7 +287,31 @@
     modal?.classList.add("hidden");
   }
 
+  function firebaseErrorMessage(code) {
+    const map = {
+      "auth/user-not-found":        "Email ou mot de passe incorrect.",
+      "auth/wrong-password":        "Email ou mot de passe incorrect.",
+      "auth/invalid-credential":    "Email ou mot de passe incorrect.",
+      "auth/email-already-in-use":  "Cet email est déjà utilisé.",
+      "auth/weak-password":         "Mot de passe trop court (6 caractères min).",
+      "auth/invalid-email":         "Email invalide.",
+      "auth/too-many-requests":     "Trop de tentatives. Réessaie dans quelques minutes.",
+      "auth/network-request-failed":"Erreur réseau. Vérifie ta connexion.",
+      "auth/popup-closed-by-user":  "Connexion Google annulée.",
+      "auth/popup-blocked":         "Popup bloquée. Autorise les popups pour ce site.",
+    };
+    return map[code] || "Erreur d'authentification. Réessaie.";
+  }
+
   function initAuth() {
+    const fb = window._firebase;
+    if (!fb) { console.error("Firebase SDK non chargé"); return; }
+
+    const { auth, GoogleAuthProvider, onAuthStateChanged,
+            signInWithEmailAndPassword, createUserWithEmailAndPassword,
+            signInWithPopup, sendEmailVerification,
+            sendPasswordResetEmail, signOut } = fb;
+
     const modal     = document.getElementById("authModal");
     const loginTab  = document.getElementById("authLoginTab");
     const regTab    = document.getElementById("authRegisterTab");
@@ -284,16 +319,26 @@
     const submitBtn = document.getElementById("authSubmitBtn");
     const errEl     = document.getElementById("authError");
     const logoutBtn = document.getElementById("userLogoutBtn");
+    const googleBtn = document.getElementById("authGoogleBtn");
+    const forgotBtn = document.getElementById("authForgotBtn");
     if (!modal || !form) return;
 
     let authMode = "login";
+
+    const showErr = (msg, ok = false) => {
+      if (!errEl) return;
+      errEl.textContent = msg;
+      errEl.style.color = ok ? "var(--color-success, #4caf50)" : "";
+      errEl.classList.remove("hidden");
+    };
+    const hideErr = () => errEl?.classList.add("hidden");
 
     loginTab?.addEventListener("click", () => {
       authMode = "login";
       loginTab.classList.add("auth-tab--active");
       regTab?.classList.remove("auth-tab--active");
       if (submitBtn) submitBtn.textContent = "Connexion";
-      if (errEl) errEl.classList.add("hidden");
+      hideErr();
     });
 
     regTab?.addEventListener("click", () => {
@@ -301,52 +346,92 @@
       regTab.classList.add("auth-tab--active");
       loginTab?.classList.remove("auth-tab--active");
       if (submitBtn) submitBtn.textContent = "Créer mon compte";
-      if (errEl) errEl.classList.add("hidden");
+      hideErr();
     });
 
+    // ── Formulaire email/password ─────────────────────────────────────────────
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (submitBtn) submitBtn.disabled = true;
-      if (errEl) errEl.classList.add("hidden");
+      hideErr();
       const email    = String(document.getElementById("authEmail")?.value || "").trim();
       const password = String(document.getElementById("authPassword")?.value || "");
-      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
-      const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
       try {
-        const res  = await fetch(backendUrl + endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          if (errEl) { errEl.textContent = data.error || "Erreur serveur."; errEl.classList.remove("hidden"); }
-          return;
+        if (authMode === "register") {
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          await sendEmailVerification(cred.user);
+          await signOut(auth); // forcer la vérification email avant connexion
+          showErr("Email de vérification envoyé ! Vérifie ta boîte mail puis connecte-toi.", true);
+          loginTab?.click(); // repasser en mode login
+        } else {
+          await signInWithEmailAndPassword(auth, email, password);
+          // onAuthStateChanged prend le relais
         }
-        setAuthUser(data);
-        hideAuthModal();
-      } catch {
-        if (errEl) { errEl.textContent = "Impossible de contacter le serveur."; errEl.classList.remove("hidden"); }
+      } catch (err) {
+        showErr(firebaseErrorMessage(err.code));
       } finally {
         if (submitBtn) submitBtn.disabled = false;
       }
     });
 
-    logoutBtn?.addEventListener("click", clearAuthUser);
+    // ── Google sign-in ────────────────────────────────────────────────────────
+    googleBtn?.addEventListener("click", async () => {
+      hideErr();
+      try {
+        await signInWithPopup(auth, new GoogleAuthProvider());
+        // onAuthStateChanged prend le relais
+      } catch (err) {
+        if (err.code !== "auth/popup-closed-by-user")
+          showErr(firebaseErrorMessage(err.code));
+      }
+    });
 
-    // Vérifier le token existant au chargement
-    const token = getAuthToken();
-    if (token) {
-      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
-      fetch(backendUrl + "/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((r) => r.ok ? r.json() : Promise.reject())
-        .then((data) => { setAuthUser({ ...data, token }); })
-        .catch(() => { clearAuthUser(); });
-    } else {
-      showAuthModal("login");
-    }
+    // ── Mot de passe oublié ───────────────────────────────────────────────────
+    forgotBtn?.addEventListener("click", async () => {
+      const email = String(document.getElementById("authEmail")?.value || "").trim();
+      if (!email) { showErr("Saisis ton email d'abord."); return; }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        showErr("Email de réinitialisation envoyé !", true);
+      } catch (err) {
+        showErr(firebaseErrorMessage(err.code));
+      }
+    });
+
+    // ── Déconnexion ───────────────────────────────────────────────────────────
+    logoutBtn?.addEventListener("click", () => signOut(auth));
+
+    // ── Session persistante (Firebase IndexedDB) ──────────────────────────────
+    // onAuthStateChanged = zéro flash au refresh, session restaurée automatiquement
+    hideAuthModal(); // masquer pendant que Firebase restaure la session
+    onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        if (!firebaseUser.emailVerified) {
+          // Compte non vérifié → déconnecter et afficher message
+          await signOut(auth);
+          showAuthModal("login");
+          showErr("Email non vérifié. Vérifie ta boîte mail puis reconnecte-toi.");
+          return;
+        }
+        try {
+          const token      = await firebaseUser.getIdToken();
+          const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+          const r          = await fetch(`${backendUrl}/api/quota`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!r.ok) throw new Error("quota fetch failed");
+          const quota = await r.json();
+          setAuthUser({ token, email: firebaseUser.email, tier: quota.tier, usageToday: quota.usageToday, limit: quota.limit });
+          hideAuthModal();
+        } catch {
+          clearAuthUser();
+          showAuthModal("login");
+        }
+      } else {
+        clearAuthUser();
+        showAuthModal("login");
+      }
+    });
   }
 
   function loadJobStats() {

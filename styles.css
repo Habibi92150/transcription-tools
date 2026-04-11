@@ -2298,6 +2298,8 @@ body.app-locked .app-shell {
   position: fixed; inset: 0; z-index: 8000;
   display: flex; align-items: center; justify-content: center;
   background: rgba(26,30,36,0.82); backdrop-filter: blur(8px);
+  padding: 16px;
+  overflow-y: auto;
 }
 .auth-modal.hidden { display: none !important; }
 .auth-card {
@@ -2309,6 +2311,28 @@ body.app-locked .app-shell {
   box-shadow: 0 24px 64px rgba(0,0,0,0.5);
   display: flex; flex-direction: column; gap: 20px;
 }
+.auth-forgot-link {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted, #888); font-size: 0.8rem;
+  text-align: center; padding: 2px 0; text-decoration: underline;
+}
+.auth-forgot-link:hover { color: var(--text-primary, #fff); }
+.auth-divider {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--text-muted, #888); font-size: 0.8rem;
+}
+.auth-divider::before, .auth-divider::after {
+  content: ""; flex: 1; height: 1px;
+  background: rgba(148,137,121,0.2);
+}
+.auth-google-btn {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(148,137,121,0.25);
+  color: var(--text-primary, #fff); font-size: 0.9rem; font-weight: 500;
+  padding: 10px 16px; border-radius: var(--radius-md, 8px); cursor: pointer;
+  transition: background 0.15s;
+}
+.auth-google-btn:hover { background: rgba(255,255,255,0.1); }
 .auth-brand {
   display: flex; align-items: center; gap: 10px;
 }

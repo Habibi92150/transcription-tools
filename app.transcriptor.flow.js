@@ -343,7 +343,7 @@
       const formData = new FormData();
       formData.append("file", fileToSend);
 
-      const token = getAuthToken();
+      const token = await getFreshAuthToken(); // token Firebase frais (auto-refresh)
       const backendHeaders = {};
       if (token) backendHeaders["Authorization"] = `Bearer ${token}`;
 
