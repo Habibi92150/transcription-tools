@@ -27,12 +27,14 @@ const GROQ_GLOBAL_CONTEXT_CHARS = Math.max(0, Number(process.env.GROQ_GLOBAL_CON
 const GEMINI_API_BASE = String(process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta")
   .trim()
   .replace(/\/$/, "");
-const GEMINI_TIMEOUT_MS = Math.max(5000, Number(process.env.GEMINI_TIMEOUT_MS || GROQ_TIMEOUT_MS));
+const GEMINI_TIMEOUT_MS = Math.max(5000, Number(process.env.GEMINI_TIMEOUT_MS || 300000)); // 5 min par défaut (gemini-2.5-pro peut être lent)
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || "").trim();
 const GEMINI_MODEL = String(process.env.GEMINI_MODEL || "gemini-2.5-flash").trim();
 const GEMINI_CLEANUP_MODEL = String(process.env.GEMINI_CLEANUP_MODEL || "gemini-2.5-flash").trim();
 const GEMINI_CLEANUP_TEMPERATURE = Number(process.env.GEMINI_CLEANUP_TEMPERATURE ?? 0);
 const GEMINI_STT_MAX_OUTPUT_TOKENS = Math.max(2048, Number(process.env.GEMINI_STT_MAX_OUTPUT_TOKENS || 8192));
+const GEMINI_CHUNK_DURATION_SEC    = Math.max(20,   Number(process.env.GEMINI_CHUNK_DURATION_SEC    || 50));
+const GEMINI_CHUNK_OVERLAP_SEC     = Math.max(0,    Number(process.env.GEMINI_CHUNK_OVERLAP_SEC     || 0));
 const TMP_DIR = path.join(os.tmpdir(), "transcription-tools");
 
 function runCommand(bin, args) {
@@ -48,6 +50,52 @@ function runCommand(bin, args) {
       else reject(new Error(stderr.trim() || `${bin} exited with ${code}`));
     });
   });
+}
+
+function runCommandCapture(bin, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (buf) => { stdout += String(buf || ""); });
+    proc.stderr.on("data", (buf) => { stderr += String(buf || ""); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim() || `${bin} exited with ${code}`));
+    });
+  });
+}
+
+async function getAudioDurationSec(filePath) {
+  const bin = String(process.env.FFPROBE_BIN || "ffprobe").trim();
+  try {
+    const stdout = await runCommandCapture(bin, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    const d = parseFloat(stdout.trim());
+    return isFinite(d) && d > 0 ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+async function extractAudioChunk(srcPath, startSec, durationSec) {
+  const ffmpegBin = String(process.env.FFMPEG_BIN || "ffmpeg").trim();
+  const outPath = path.join(TMP_DIR, `chunk-${Date.now()}-${crypto.randomUUID()}.mp3`);
+  await fs.mkdir(TMP_DIR, { recursive: true });
+  await runCommand(ffmpegBin, [
+    "-y",
+    "-ss", String(startSec),
+    "-t",  String(durationSec),
+    "-i",  srcPath,
+    "-vn", "-ar", "16000", "-ac", "1", "-b:a", "128k",
+    outPath,
+  ]);
+  return outPath;
 }
 
 function msToSec(ms) {
@@ -731,26 +779,90 @@ function normalizeGeminiSttSegmentsFromPayload(parsed) {
 }
 
 /**
- * Résout les chevauchements et garantit une durée minimale par segment.
- * - Trie par start
- * - Clip end si un segment déborde sur le suivant
- * - Garantit une durée minimale de minDurationSec
+ * Plafonne chaque segment à (wordCount × maxSecPerWord) avant tout traitement.
+ * Corrige les `end` absurdes que Gemini pose au timestamp du segment suivant
+ * (ex: "Parle lui bien." à 40 secondes alors que la voix dure < 1 s).
  */
+function preCapLongSegments(segments, maxSecPerWord = 2, minDurationSec = 1) {
+  if (!Array.isArray(segments) || !segments.length) return segments;
+  return segments.map(seg => {
+    const start = Number(seg.start) || 0;
+    const end   = Number(seg.end)   || start;
+    const words = String(seg.text || "").trim().split(/\s+/).filter(Boolean).length;
+    const maxDur = Math.max(minDurationSec, words * maxSecPerWord);
+    if (end - start > maxDur) {
+      return { ...seg, end: start + maxDur };
+    }
+    return seg;
+  });
+}
+
+/**
+ * Détecte les clusters de segments artificiellement compressés (durée ≤ maxArtificialDurSec)
+ * suivis d'un grand trou (≥ minGapSec), et redistribue leurs timestamps proportionnellement
+ * au nombre de mots sur l'intervalle réel disponible.
+ *
+ * Cas typique : teaser/recap en début d'épisode où Gemini entasse tout le contenu
+ * dans les premières secondes avec des timestamps de 120ms chacun.
+ */
+function redistributeCompressedClusters(segments, maxArtificialDurSec = 0.15, minClusterSize = 3, minGapSec = 5) {
+  if (!Array.isArray(segments) || segments.length < minClusterSize) return segments;
+
+  const result = segments.map(s => ({ ...s }));
+  let i = 0;
+
+  while (i < result.length) {
+    if ((result[i].end - result[i].start) > maxArtificialDurSec) { i++; continue; }
+
+    // Délimiter le cluster
+    const clusterStart = i;
+    while (i < result.length && (result[i].end - result[i].start) <= maxArtificialDurSec) i++;
+    const clusterEnd = i;
+    const clusterSize = clusterEnd - clusterStart;
+
+    if (clusterSize < minClusterSize) continue;
+
+    // Vérifier qu'un grand trou suit le cluster
+    const clusterTimeEnd = result[clusterEnd - 1].end;
+    const nextStart = clusterEnd < result.length ? result[clusterEnd].start : null;
+    if (!nextStart || (nextStart - clusterTimeEnd) < minGapSec) continue;
+
+    // Redistribuer sur [clusterRealStart, nextStart - 500ms]
+    const realStart   = result[clusterStart].start;
+    const realEnd     = nextStart - 0.5;
+    const totalDur    = realEnd - realStart;
+    if (totalDur <= 0) continue;
+
+    const wordCounts = result.slice(clusterStart, clusterEnd).map(seg =>
+      Math.max(1, String(seg.text || "").trim().split(/\s+/).filter(Boolean).length)
+    );
+    const totalWords = wordCounts.reduce((a, b) => a + b, 0);
+
+    let t = realStart;
+    for (let j = clusterStart; j < clusterEnd; j++) {
+      const dur = (wordCounts[j - clusterStart] / totalWords) * totalDur;
+      result[j].start = t;
+      result[j].end   = t + dur;
+      t += dur;
+    }
+
+    console.log(`[redistribute] ${clusterSize} segments compressés redistribués sur ${totalDur.toFixed(1)}s (trou comblé : ${minGapSec}s+)`);
+  }
+
+  return result;
+}
+
 function resolveSegmentOverlaps(segments, minDurationSec = 0.5, maxSecPerWord = 3) {
   if (!Array.isArray(segments) || !segments.length) return segments;
   const sorted = [...segments].sort((a, b) => a.start - b.start);
   for (let i = 0; i < sorted.length; i++) {
     const seg = sorted[i];
     const next = sorted[i + 1];
-    // Plafonner la durée selon le nombre de mots (évite les 20s sur "Parle lui")
+    // Plafonner la durée selon le nombre de mots (évite les segments trop longs)
     const wordCount = String(seg.text || "").trim().split(/\s+/).filter(Boolean).length;
     const maxDur = Math.max(minDurationSec, wordCount * maxSecPerWord);
     if (seg.end - seg.start > maxDur) {
       seg.end = seg.start + maxDur;
-    }
-    // Combler le gap vers le segment suivant
-    if (next && seg.end < next.start - 0.04) {
-      seg.end = next.start - 0.04;
     }
     // Garantir durée minimale
     if (seg.end - seg.start < minDurationSec) {
@@ -831,9 +943,11 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         '[{"start": 0.0, "end": 3.5, "text": "Bonjour tout le monde", "speaker": "Speaker 1"}, ...]\n' +
         "Les timestamps sont en secondes (nombres décimaux), pas en format sous-titres.\n" +
         "Interdit : format SRT/WebVTT, lignes du type 00:00:00,000 --> 00:00:01,000, numéros de réplique seuls, ou texte récapitulatif à la place des segments.";
-    const userHint = speakerDiarizationPass
-      ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement (tableau d'objets start/end/text/speaker), jamais de .srt."
-      : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre — pas de format sous-titres .srt.";
+    const userHint = options?.userPrompt
+      ? String(options.userPrompt)
+      : speakerDiarizationPass
+        ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement (tableau d'objets start/end/text/speaker), jamais de .srt."
+        : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre — pas de format sous-titres .srt.";
 
     const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
     const baseParts = [
@@ -910,6 +1024,153 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
     }
   } finally {
     if (cleanupWav) await cleanupWav();
+  }
+}
+
+/**
+ * Transcrit un fichier audio long en le découpant en chunks de GEMINI_CHUNK_DURATION_SEC secondes
+ * avec GEMINI_CHUNK_OVERLAP_SEC secondes de chevauchement pour éviter les coupures en plein mot.
+ * Les timestamps de chaque chunk sont décalés pour correspondre à la position réelle dans l'audio.
+ * Si l'audio est court (≤ chunk + overlap), appel direct sans découpage.
+ */
+async function transcribeWithGeminiChunked(filePath, key, modelId, options) {
+  // 1. Convertir en MP3 d'abord — ffprobe et ffmpeg travaillent sur un format stable
+  const mp3 = await ensureMp3ForGemini(filePath);
+  const mp3Path = mp3.path;
+
+  try {
+    const duration = await getAudioDurationSec(mp3Path);
+
+    if (!duration) {
+      console.warn("[gemini-chunked] Impossible d'obtenir la durée (ffprobe absent ?) — appel direct sans chunking");
+      return await transcribeWithGemini(mp3Path, key, modelId, options);
+    }
+
+    if (duration <= GEMINI_CHUNK_DURATION_SEC + GEMINI_CHUNK_OVERLAP_SEC) {
+      console.log(`[gemini-chunked] Durée ${duration.toFixed(1)}s ≤ seuil — appel direct sans chunking`);
+      return await transcribeWithGemini(mp3Path, key, modelId, options);
+    }
+
+    console.log(`[gemini-chunked] Durée : ${duration.toFixed(1)}s — chunks de ${GEMINI_CHUNK_DURATION_SEC}s (+${GEMINI_CHUNK_OVERLAP_SEC}s overlap)`);
+
+    const chunks = [];
+    let chunkStart = 0;
+    while (chunkStart < duration) {
+      const chunkDur = Math.min(GEMINI_CHUNK_DURATION_SEC + GEMINI_CHUNK_OVERLAP_SEC, duration - chunkStart);
+      chunks.push({ start: chunkStart, duration: chunkDur });
+      chunkStart += GEMINI_CHUNK_DURATION_SEC;
+    }
+
+    // Extraire tous les chunks en parallèle, puis envoyer à Gemini en parallèle
+    const chunkPaths = await Promise.all(
+      chunks.map((chunk, i) => {
+        console.log(`[gemini-chunked] Extraction chunk ${i + 1}/${chunks.length} : ${chunk.start.toFixed(1)}s → ${(chunk.start + chunk.duration).toFixed(1)}s`);
+        return extractAudioChunk(mp3Path, chunk.start, chunk.duration);
+      })
+    );
+
+    let chunkResults;
+    try {
+      chunkResults = await Promise.all(
+        chunkPaths.map((chunkPath, i) => {
+          const rangeStr = `${chunks[i].start.toFixed(1)}s → ${(chunks[i].start + chunks[i].duration).toFixed(1)}s`;
+          console.log(`[gemini-chunked] Envoi chunk ${i + 1}/${chunks.length} (${chunks[i].duration.toFixed(1)}s | ${rangeStr})`);
+          const chunkOpts = {
+            ...options,
+            userPrompt: `Extrait audio — position dans le fichier original : ${rangeStr}. Transcris toute la parole audible dans cet extrait — tableau JSON uniquement.`,
+          };
+          return transcribeWithGemini(chunkPath, key, modelId, chunkOpts);
+        })
+      );
+    } finally {
+      await Promise.all(chunkPaths.map((p) => fs.unlink(p).catch(() => {})));
+    }
+
+    // Retry automatique des chunks qui ont renvoyé 0 segment
+    const emptyIndices = chunkResults.map((r, i) => (r.length === 0 ? i : -1)).filter((i) => i >= 0);
+    if (emptyIndices.length > 0) {
+      console.warn(`[gemini-chunked] 🔁 ${emptyIndices.length} chunk(s) vide(s) — retry en cours...`);
+      const retryPaths = await Promise.all(
+        emptyIndices.map((i) => extractAudioChunk(mp3Path, chunks[i].start, chunks[i].duration))
+      );
+      try {
+        const retryResults = await Promise.all(
+          retryPaths.map((p, ri) => {
+            const i = emptyIndices[ri];
+            const rangeStr = `${chunks[i].start.toFixed(1)}s → ${(chunks[i].start + chunks[i].duration).toFixed(1)}s`;
+            console.log(`[gemini-chunked] 🔁 Retry chunk ${i + 1}/${chunks.length} (${rangeStr})`);
+            const chunkOpts = {
+              ...options,
+              userPrompt: `IMPORTANT : cet extrait audio (${rangeStr} du fichier original) contient de la parole. Tu DOIS produire au moins un segment JSON. Transcris toute la parole audible — tableau JSON uniquement.`,
+            };
+            return transcribeWithGemini(p, key, modelId, chunkOpts);
+          })
+        );
+        emptyIndices.forEach((i, ri) => {
+          if (retryResults[ri].length > 0) {
+            console.log(`[gemini-chunked] ✅ Retry chunk ${i + 1} OK : ${retryResults[ri].length} segment(s) récupéré(s)`);
+            chunkResults[i] = retryResults[ri];
+          } else {
+            console.warn(`[gemini-chunked] ❌ Retry chunk ${i + 1} toujours vide après retry`);
+          }
+        });
+      } finally {
+        await Promise.all(retryPaths.map((p) => fs.unlink(p).catch(() => {})));
+      }
+    }
+
+    const allSegments = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const dedupeFrom  = i === 0 ? 0 : GEMINI_CHUNK_OVERLAP_SEC;
+      const chunkEndStr = (chunk.start + chunk.duration).toFixed(1);
+
+      if (chunkResults[i].length === 0) {
+        console.warn(`[gemini-chunked] ⚠️  Chunk ${i + 1}/${chunks.length} (${chunk.start.toFixed(1)}s→${chunkEndStr}s) : Gemini a renvoyé 0 segment`);
+        continue;
+      }
+
+      let kept = 0;
+      let skippedOverlap = 0;
+      let skippedOutOfBounds = 0;
+
+      for (const seg of chunkResults[i]) {
+        const rawStart = Number(seg.start) || 0;
+        const rawEnd   = Number(seg.end)   || rawStart;
+
+        // Fix 2 : ignorer les segments dont le timestamp dépasse la durée du chunk
+        // (Gemini a retourné des timestamps décalés — ex. teaser placé à 49s dans un chunk de 53s)
+        if (rawStart >= chunk.duration) {
+          skippedOutOfBounds++;
+          continue;
+        }
+
+        // Fix 3 : déduplication — ignorer la zone de chevauchement avec le chunk précédent
+        if (rawStart < dedupeFrom) {
+          skippedOverlap++;
+          continue;
+        }
+
+        kept++;
+        allSegments.push({
+          ...seg,
+          start: rawStart + chunk.start,
+          end:   Math.min(rawEnd, chunk.duration) + chunk.start,
+        });
+      }
+
+      const parts = [];
+      if (kept > 0)               parts.push(`${kept} conservé(s)`);
+      if (skippedOverlap > 0)     parts.push(`${skippedOverlap} overlap`);
+      if (skippedOutOfBounds > 0) parts.push(`${skippedOutOfBounds} hors-bornes`);
+      console.log(`[gemini-chunked] Chunk ${i + 1}/${chunks.length} : ${chunkResults[i].length} seg(s) reçu(s) — ${parts.join(", ")}`);
+    }
+
+    return allSegments.sort((a, b) => a.start - b.start);
+
+  } finally {
+    // Nettoyer le MP3 temporaire si on l'a créé (cleanup null si c'était déjà un MP3)
+    if (mp3.cleanup) await mp3.cleanup();
   }
 }
 
@@ -1005,33 +1266,8 @@ async function handleFreeTranscription(req, uploadedPath) {
     segments = await transcribeWithWhisperCpp(uploadedPath);
   }
 
-  let finalSegments = segments;
-  let textCleanupStrategy = "none";
-  if (TEXT_CLEANUP_PROVIDER === "groq" && STT_ENGINE !== "gemini") {
-    try {
-      const cleaned = await cleanSegmentsWithGroq(segments, groqApiKey);
-      finalSegments = cleaned.segments;
-      textCleanupStrategy = cleaned.strategy;
-    } catch {
-      finalSegments = segments.map((seg) => ({
-        ...seg,
-        text: applyDeterministicFrenchCleanup(String(seg?.text || "")),
-      }));
-      textCleanupStrategy = "groq-failed-deterministic-fallback";
-    }
-  } else if (TEXT_CLEANUP_PROVIDER === "gemini") {
-    try {
-      const cleaned = await cleanSegmentsWithGemini(segments, geminiKeyForReq);
-      finalSegments = cleaned.segments;
-      textCleanupStrategy = cleaned.strategy;
-    } catch {
-      finalSegments = segments.map((seg) => ({
-        ...seg,
-        text: applyDeterministicFrenchCleanup(String(seg?.text || "")),
-      }));
-      textCleanupStrategy = "gemini-failed-deterministic-fallback";
-    }
-  }
+  const finalSegments = segments;
+  const textCleanupStrategy = "none-debug";
 
   return {
     segments: finalSegments,
@@ -1043,4 +1279,4 @@ async function handleFreeTranscription(req, uploadedPath) {
   };
 }
 
-module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini, splitLongSegmentsBackend, resolveSegmentOverlaps };
+module.exports = { handleFreeTranscription, cleanSegmentsWithGemini, transcribeWithGemini, transcribeWithGeminiChunked, redistributeCompressedClusters, preCapLongSegments, splitLongSegmentsBackend, resolveSegmentOverlaps };
