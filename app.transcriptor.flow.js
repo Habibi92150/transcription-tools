@@ -1,44 +1,3 @@
-  function isPremiumSessionUnlocked() {
-    try {
-      const token = sessionStorage.getItem("premiumToken");
-      const expiresAt = Number(sessionStorage.getItem("premiumTokenExpiry"));
-      if (!token || !Number.isFinite(expiresAt)) return false;
-      return Date.now() < expiresAt;
-    } catch {
-      return false;
-    }
-  }
-
-  function syncPremiumTierLockedClass() {
-    if (tierPaidBtn) {
-      tierPaidBtn.classList.toggle("tier-segment__btn--premium-locked", !isPremiumSessionUnlocked());
-    }
-    if (reviewMode) {
-      reviewMode.disabled = !isPremiumSessionUnlocked();
-      if (!isPremiumSessionUnlocked()) reviewMode.checked = false;
-    }
-  }
-
-  function openPremiumPin() {
-    const gate = document.getElementById("premiumPinGate");
-    const input = document.getElementById("premiumPinInput");
-    const errEl = document.getElementById("premiumPinError");
-    if (!gate || !input) return;
-    gate.classList.remove("hidden");
-    if (errEl) errEl.classList.add("hidden");
-    input.value = "";
-    input.focus();
-  }
-
-  function closePremiumPin() {
-    const gate = document.getElementById("premiumPinGate");
-    const input = document.getElementById("premiumPinInput");
-    const errEl = document.getElementById("premiumPinError");
-    if (gate) gate.classList.add("hidden");
-    if (input) input.value = "";
-    if (errEl) errEl.classList.add("hidden");
-  }
-
   function setInfoStep(activeNum) {
     document.querySelectorAll("#page-transcriptor .info-step").forEach((el, i) => {
       const num = i + 1;
@@ -95,17 +54,13 @@
     setSelectedFile(file);
   });
 
-  const savedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
-  if (savedKey) apiKeyInput.value = savedKey;
-  // /api/config en URL relative = toujours correct quel que soit le localStorage du client
-  // Si le serveur renvoie une backendUrl, elle prime TOUJOURS sur localStorage (évite les URLs périmées)
+  // Récupérer la backendUrl depuis /api/config si disponible
   fetch("/api/config")
     .then((r) => {
       if (!r.ok) throw new Error(`config ${r.status}`);
       return r.json();
     })
     .then((cfg) => {
-      if (cfg.groqApiKey && apiKeyInput && !apiKeyInput.value) apiKeyInput.value = cfg.groqApiKey;
       if (cfg.backendUrl && backendUrlInput) {
         // Serveur connaît la bonne URL → on force et on met à jour localStorage
         backendUrlInput.value = cfg.backendUrl;
@@ -124,144 +79,13 @@
         backendUrlInput.value = savedBackendUrl || DEFAULT_BACKEND_URL;
       }
     });
-  const savedGeminiKey = localStorage.getItem(GEMINI_KEY_STORAGE);
-  if (geminiApiKeyInput && savedGeminiKey) geminiApiKeyInput.value = savedGeminiKey;
-  const savedLocalMode = localStorage.getItem(LOCAL_MODE_STORAGE_KEY);
-  if (localMode) localMode.checked = savedLocalMode === "1";
   const savedReviewMode = localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
   if (reviewMode) reviewMode.checked = savedReviewMode == null ? true : savedReviewMode === "1";
+  // localMode toujours actif (Gemini pour tous)
+  if (localMode) localMode.checked = true;
   syncModeUi();
   setInfoStep(1);
 
-  apiKeyInput.oninput = () => {
-    localStorage.setItem(API_KEY_STORAGE_KEY, apiKeyInput.value.trim());
-    refreshRunButton();
-  };
-  if (geminiApiKeyInput) {
-    geminiApiKeyInput.addEventListener("input", () => {
-      const t = geminiApiKeyInput.value.trim();
-      if (t) localStorage.setItem(GEMINI_KEY_STORAGE, t);
-      else localStorage.removeItem(GEMINI_KEY_STORAGE);
-    });
-  }
-  function setLocalBackendMode(enabled) {
-    if (!localMode) return;
-    localMode.checked = !!enabled;
-    localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
-    syncModeUi();
-    refreshRunButton();
-  }
-  if (localMode) {
-    localMode.onchange = () => {
-      localStorage.setItem(LOCAL_MODE_STORAGE_KEY, localMode.checked ? "1" : "0");
-      syncModeUi();
-      refreshRunButton();
-    };
-  }
-  if (tierFreeBtn) {
-    tierFreeBtn.addEventListener("click", () => {
-      sessionStorage.removeItem("premiumToken");
-      sessionStorage.removeItem("premiumTokenExpiry");
-      setLocalBackendMode(false);
-    });
-  }
-  if (tierPaidBtn) {
-    tierPaidBtn.addEventListener(
-      "click",
-      (e) => {
-        if (isPremiumSessionUnlocked()) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        openPremiumPin();
-      },
-      { capture: true }
-    );
-    tierPaidBtn.addEventListener("click", () => setLocalBackendMode(true));
-    syncPremiumTierLockedClass();
-  }
-
-  const premiumPinGate = document.getElementById("premiumPinGate");
-  const premiumPinForm = document.getElementById("premiumPinForm");
-  if (premiumPinForm) {
-    premiumPinForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const input = document.getElementById("premiumPinInput");
-      const errEl = document.getElementById("premiumPinError");
-      const card = document.querySelector("#premiumPinGate .premium-pin-card");
-      const submitBtn = premiumPinForm.querySelector("button[type=submit]");
-      const pin = String(input?.value || "").trim();
-      if (!pin) return;
-      if (submitBtn) submitBtn.disabled = true;
-      try {
-        let backendUrl = getBackendUrl().replace(/\/$/, "");
-        try {
-          const h = String(location.hostname || "");
-          const saved = String(localStorage.getItem(BACKEND_URL_STORAGE_KEY) || "").trim();
-          const localPage = !h || h === "localhost" || h === "127.0.0.1";
-          if (localPage && !saved) {
-            backendUrl = "http://127.0.0.1:8787";
-          }
-        } catch {
-          /* ignore */
-        }
-        const res = await fetch(backendUrl + "/api/auth/premium", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.token && data.expiresAt) {
-          sessionStorage.setItem("premiumToken", data.token);
-          sessionStorage.setItem("premiumTokenExpiry", String(data.expiresAt));
-          if (tierPaidBtn) tierPaidBtn.classList.remove("tier-segment__btn--premium-locked");
-          syncPremiumTierLockedClass();
-          if (reviewMode) {
-            reviewMode.checked = true;
-            localStorage.setItem(REVIEW_MODE_STORAGE_KEY, "1");
-          }
-          closePremiumPin();
-          tierPaidBtn?.click();
-        } else {
-          if (card) {
-            card.classList.add("premium-pin-card--shake");
-            setTimeout(() => card.classList.remove("premium-pin-card--shake"), 400);
-          }
-          let errMsg = "PIN incorrect.";
-          if (typeof data?.error === "string" && data.error.trim()) {
-            errMsg = data.error.trim();
-          } else if (res.status === 503) {
-            errMsg = "Premium non configure sur ce serveur.";
-          }
-          if (errEl) {
-            errEl.textContent = errMsg;
-            errEl.classList.remove("hidden");
-          }
-          if (input) {
-            input.value = "";
-            input.focus();
-          }
-        }
-      } catch {
-        if (errEl) {
-          errEl.textContent =
-            "Impossible de contacter le serveur. En local, lance le backend (port 8787) ou enregistre l’URL du serveur dans les reglages.";
-          errEl.classList.remove("hidden");
-        }
-      } finally {
-        if (submitBtn) submitBtn.disabled = false;
-      }
-    });
-  }
-  if (premiumPinGate) {
-    premiumPinGate.addEventListener("click", (e) => {
-      if (e.target === e.currentTarget) closePremiumPin();
-    });
-  }
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    const gate = document.getElementById("premiumPinGate");
-    if (gate && !gate.classList.contains("hidden")) closePremiumPin();
-  });
   if (backendUrlInput) {
     backendUrlInput.oninput = () => {
       localStorage.setItem(BACKEND_URL_STORAGE_KEY, String(backendUrlInput.value || "").trim());
@@ -359,10 +183,6 @@
   }
   if (reviewWordingGenerateBtn) {
     reviewWordingGenerateBtn.addEventListener("click", () => {
-      if (!isPremiumSessionUnlocked()) {
-        showToast("Cette fonctionnalite est reservee au tier Premium.");
-        return;
-      }
       generateWordingsFromExcerpt();
     });
   }
@@ -412,7 +232,7 @@
       return;
     }
     const content = buildSrtFromSegments(safeSegments);
-    const fileName = `${reviewState.baseName}_transcription_corrigee_viapremium.srt`;
+    const fileName = `${reviewState.baseName}_transcription_corrigee.srt`;
     download(content, fileName);
     exportMeta.textContent = `${fileName} · ${safeSegments.length} segments`;
     reviewPanel.hidden = true;
@@ -459,12 +279,13 @@
 
   // ========= Run =========
   runBtn.onclick = async () => {
-    setInfoStep(1);
-    syncPremiumKeyOnBlur();
-    const apiKey = apiKeyInput.value.trim();
-    const localBackendMode = isLocalModeEnabled();
-    const backendUrl = getBackendUrl();
     if (!selectedFile) return;
+    if (!currentUser) { showAuthModal("login"); return; }
+
+    setInfoStep(1);
+    const backendUrl = getBackendUrl();
+    const modeKey    = "local";
+    const jobT0      = Date.now();
 
     runBtn.disabled = true;
     if (pickBtn) pickBtn.disabled = true;
@@ -480,8 +301,6 @@
     sr("Transcription démarrée.");
 
     const baseName = selectedFile.name.replace(/\.[^/.]+$/, "") || "audio";
-    const modeKey = localBackendMode ? "local" : "cloud";
-    const jobT0 = Date.now();
 
     try {
       // STEP 1 — Préparation
@@ -489,26 +308,18 @@
       setProgress(5);
 
       let fileToSend = selectedFile;
-      let heavyPrep = false;
+      let heavyPrep  = false;
       if (isVideoFile(selectedFile) && extractAudio.checked && canUseFfmpegExtract()) {
         heavyPrep = true;
-        setEta(ETA_TRANSCRIBE);
         await loadFfmpeg();
-        setEta(ETA_TRANSCRIBE);
         fileToSend = await extractAudioTrack(selectedFile);
-      }
-      if (localBackendMode && !isWhisperSupportedAudio(fileToSend)) {
-        heavyPrep = true;
-        setEta("Préparation audio pour le backend…");
-        fileToSend = await normalizeAudioForWhisper(fileToSend);
-        setEta(ETA_TRANSCRIBE);
       }
       setStep("prep", "done");
       setProgress(15);
 
-      const mb = fileToSend.size / (1024 * 1024);
-      const estimatedApiMs = Math.max(20000, mb * (localBackendMode ? 12000 : 3000));
-      const learnedTotal = medianLearnedTotalMs(fileToSend.size, modeKey);
+      const mb             = fileToSend.size / (1024 * 1024);
+      const estimatedApiMs = Math.max(20000, mb * 12000);
+      const learnedTotal   = medianLearnedTotalMs(fileToSend.size, modeKey);
       const serverBudgetMs = Math.max(15000, learnedTotal ? Math.round(learnedTotal * 0.52) : estimatedApiMs);
       const predictedTotal = heuristicTotalJobMs(fileToSend.size, modeKey, heavyPrep);
 
@@ -531,59 +342,28 @@
 
       const formData = new FormData();
       formData.append("file", fileToSend);
-      if (!localBackendMode) {
-        // Mode Gratuit : Groq uniquement dans le navigateur (aucun backend, aucune Gemini).
-        formData.append("model", "whisper-large-v3-turbo");
-        formData.append("language", "fr");
-        formData.append("temperature", "0");
-        formData.append("response_format", "verbose_json");
-      }
 
-      const backendHeaders = { "x-groq-api-key": apiKey || "" };
-      const premiumToken = sessionStorage.getItem("premiumToken");
-      if (premiumToken && isPremiumSessionUnlocked()) {
-        backendHeaders["x-premium-token"] = premiumToken;
-      }
-      const gk = geminiApiKeyInput?.value.trim();
-      if (gk) backendHeaders["x-gemini-api-key"] = gk;
-      else if (!localBackendMode) backendHeaders["x-skip-gemini"] = "1";
-      // mode Premium : pas de x-skip-gemini, le serveur utilise sa propre GEMINI_API_KEY
+      const token = getAuthToken();
+      const backendHeaders = {};
+      if (token) backendHeaders["Authorization"] = `Bearer ${token}`;
 
-      const data = localBackendMode
-        ? await postBackendTranscription(
-            `${backendUrl.replace(/\/$/, "")}/api/transcribe`,
-            formData,
-            (p) => {
-              onUploadProgressBytes(p * fileToSend.size);
-              setEta(ETA_TRANSCRIBE);
-            },
-            () => {
-              onUploadComplete();
-              setStep("upload", "done");
-              setProgress(60);
-              setStep("transcribe", "active");
-              sr("Fichier envoyé. Backend local en cours.");
-              tickRemain();
-            },
-            backendHeaders
-          )
-        : await postTranscription(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            apiKey,
-            formData,
-            (p) => {
-              onUploadProgressBytes(p * fileToSend.size);
-              setEta(ETA_TRANSCRIBE);
-            },
-            () => {
-              onUploadComplete();
-              setStep("upload", "done");
-              setProgress(60);
-              setStep("transcribe", "active");
-              sr("Fichier envoyé. Transcription IA en cours.");
-              tickRemain();
-            }
-          );
+      const data = await postBackendTranscription(
+        `${backendUrl.replace(/\/$/, "")}/api/transcribe`,
+        formData,
+        (p) => {
+          onUploadProgressBytes(p * fileToSend.size);
+          setEta(ETA_TRANSCRIBE);
+        },
+        () => {
+          onUploadComplete();
+          setStep("upload", "done");
+          setProgress(60);
+          setStep("transcribe", "active");
+          sr("Fichier envoyé. Transcription Gemini en cours.");
+          tickRemain();
+        },
+        backendHeaders
+      );
 
       // STEP 3 — Transcription done
       setStep("transcribe", "done");
@@ -595,16 +375,18 @@
       let segments = Array.isArray(data.segments) ? data.segments : [];
       if (!segments.length) throw new Error("NO_SEGMENTS");
 
-      // Mode Gratuit (Groq dans le navigateur) : pas de diarisation ni align-speakers.
-      // Les locuteurs ne sont pas détectés ; le Premium reste sur /api/transcribe (backend) inchangé.
+      // Mettre à jour le quota affiché dans la bannière
+      if (currentUser) {
+        currentUser.usageToday = (currentUser.usageToday || 0) + 1;
+        updateUserBanner();
+      }
 
-      const reviewEnabled = !!reviewMode?.checked && isLocalModeEnabled() && isPremiumSessionUnlocked();
-      let srtFileName = `${baseName}_transcription_viagratuit.srt`;
+      const reviewEnabled = !!reviewMode?.checked;
+      const srtFileName   = `${baseName}_transcription.srt`;
       if (reviewEnabled) {
-        prepareReviewPanel(baseName, segments, selectedFile, localBackendMode ? "backend" : "cloud-premium");
+        prepareReviewPanel(baseName, segments, selectedFile, "backend");
       } else {
-        const srtContent = buildSrtFromSegments(segments);
-        download(srtContent, srtFileName);
+        download(buildSrtFromSegments(segments), srtFileName);
       }
 
       setStep("format", "done");
@@ -630,12 +412,14 @@
       const activeStep = document.querySelector(".step[data-status='active']");
       if (activeStep) setStep(activeStep.dataset.step, "error");
 
-      const retryLabel = extractRateLimitRetryLabel(err?.detail || "");
-      const msg = retryLabel
-        ? `Quota Groq atteint. Réessaie dans ${retryLabel}.`
-        : ERROR_MESSAGES[err.message] || ERROR_MESSAGES.GENERIC;
-      showToast(msg);
-      sr("Erreur : " + msg);
+      // 429 : quota journalier dépassé → toaster rouge dédié
+      if (err.status === 429 || err.quotaExceeded) {
+        showToastError(err.message || "Quota journalier atteint. Reviens demain.");
+      } else {
+        const msg = ERROR_MESSAGES[err.message] || err.message || ERROR_MESSAGES.GENERIC;
+        showToast(msg);
+      }
+      sr("Erreur : transcription échouée.");
 
       setTimeout(() => {
         uploadPanel.hidden = false;

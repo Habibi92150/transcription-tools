@@ -1,0 +1,12 @@
+{
+  "users": [
+    {
+      "id": "40728262-ef0d-4813-afe7-1fcfbf6c30b6",
+      "email": "adamzeid@hotmail.fr",
+      "passwordHash": "bc51c3b3775b0f7434e7f7a6a8f805c3:126d316adf379ce23ba762f3dac66cd8a712138edd4b5440150ed1e0ecf5f46a5db3ebf0c1f286ce29601da59f0602a3583dc630988d72cd3b7798717b6e5d75",
+      "tier": "free",
+      "createdAt": "2026-04-11T16:26:33.782Z"
+    }
+  ],
+  "usage": {}
+}

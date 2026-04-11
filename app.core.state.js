@@ -7,11 +7,9 @@
   const fileInput = $("fileInput");
   const apiKeyInput = $("apiKeyInput");
   const apiKeyFieldWrap = $("apiKeyFieldWrap");
-  const premiumKeyInput = $("premiumKeyInput");
-  const premiumKeyFieldWrap = $("premiumKeyFieldWrap");
   const localMode = $("localMode");
-  const tierFreeBtn = $("tierFreeBtn");
-  const tierPaidBtn = $("tierPaidBtn");
+  const tierFreeBtn = null;
+  const tierPaidBtn = null;
   const backendUrlInput = $("backendUrlInput");
   const backendUrlRow = $("backendUrlRow");
   const geminiKeyField = $("geminiKeyField");
@@ -84,18 +82,16 @@
   const summaryPoints2 = $("summaryPoints2");
   const summaryCopyBtn2 = $("summaryCopyBtn2");
   const summaryNewBtn2 = $("summaryNewBtn2");
-  const appPinGate = $("appPinGate");
-  const appPinForm = $("appPinForm");
-  const appPinTitle = $("appPinTitle");
-  const appPinHint = $("appPinHint");
-  const appPinInput = $("appPinInput");
-  const appPinConfirmWrap = $("appPinConfirmWrap");
-  const appPinConfirmInput = $("appPinConfirmInput");
-  const appPinError = $("appPinError");
+  const appPinGate = null;
+  const appPinGate2 = null; // supprimé — remplacé par auth JWT
+  const appPinTitle = null;
+  const appPinHint = null;
+  const appPinInput = null;
+  const appPinConfirmWrap = null;
+  const appPinConfirmInput = null;
+  const appPinError = null;
 
-  const API_KEY_STORAGE_KEY = "groq_api_key_transcription";
-  const PREMIUM_KEY = "CREATOR8";
-  const PREMIUM_KEY_STORAGE = "smm_premium_key";
+  const AUTH_TOKEN_KEY = "smmstudio_auth_token";
   const GEMINI_KEY_STORAGE = "transcriptor_gemini_key";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
   const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
@@ -104,9 +100,6 @@
   const EPISODE_SUMMARY_EXTRACT_PREF_KEY = "episode_summary_extract_audio_pref";
   const EPISODE_SUMMARY_PROVIDER_KEY = "episode_summary_llm_provider";
   const EPISODE_SUMMARY_GEMINI_KEY = "episode_summary_gemini_api_key";
-  const APP_PIN_CODE_STORAGE_KEY = "app_pin_code";
-  const APP_PIN_UNLOCKED_STORAGE_KEY = "app_pin_unlocked";
-  const APP_PIN_FIXED_CODE = "2912";
   const DEFAULT_BACKEND_URL = "http://localhost:8787";
   const JOB_STATS_KEY = "transcriptor_job_stats_v1";
   const JOB_STATS_MAX = 18;
@@ -222,85 +215,138 @@
   let reviewActiveIndex = -1;
   let wordingState = { loading: false, items: [], source: "" };
   let summaryPulseTimer2 = null;
-  let appUnlocked = false;
+  // ── Auth state ────────────────────────────────────────────────────────────────
+  let currentUser = null; // { email, tier, usageToday, limit }
 
-  function showPinError(msg) {
-    if (!appPinError) return;
-    appPinError.textContent = msg;
-    appPinError.classList.remove("hidden");
+  function getAuthToken() {
+    return localStorage.getItem(AUTH_TOKEN_KEY) || null;
   }
 
-  function clearPinError() {
-    if (!appPinError) return;
-    appPinError.textContent = "";
-    appPinError.classList.add("hidden");
+  function setAuthUser(data) {
+    currentUser = data;
+    if (data?.token) localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+    updateUserBanner();
+    refreshRunButton?.();
   }
 
-  function normalizePin(value) {
-    return String(value || "").replace(/\D+/g, "").slice(0, 8);
+  function clearAuthUser() {
+    currentUser = null;
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    updateUserBanner();
+    showAuthModal("login");
+    refreshRunButton?.();
   }
 
-  function applyAppLockState(unlocked) {
-    appUnlocked = Boolean(unlocked);
-    document.body.classList.toggle("app-locked", !appUnlocked);
-    if (appPinGate) appPinGate.classList.toggle("hidden", appUnlocked);
+  function updateUserBanner() {
+    const banner    = document.getElementById("userStatusBanner");
+    const tierBadge = document.getElementById("userStatusTierBadge");
+    const emailEl   = document.getElementById("userStatusEmail");
+    const quotaEl   = document.getElementById("userStatusQuota");
+    if (!banner) return;
+    if (!currentUser) { banner.classList.add("hidden"); return; }
+    banner.classList.remove("hidden");
+    const isPremium = currentUser.tier === "premium";
+    tierBadge.textContent = isPremium ? "Premium" : "Gratuit";
+    tierBadge.className = `user-status-tier-badge ${isPremium ? "user-status-tier-badge--premium" : ""}`;
+    emailEl.textContent  = currentUser.email || "";
+    quotaEl.textContent  = `${currentUser.usageToday ?? 0}/${currentUser.limit ?? 3} aujourd'hui`;
   }
 
-  function unlockApp() {
-    localStorage.setItem(APP_PIN_UNLOCKED_STORAGE_KEY, "1");
-    applyAppLockState(true);
+  // ── Modal auth ────────────────────────────────────────────────────────────────
+  function showAuthModal(mode = "login") {
+    const modal  = document.getElementById("authModal");
+    const loginTab  = document.getElementById("authLoginTab");
+    const regTab    = document.getElementById("authRegisterTab");
+    const submitBtn = document.getElementById("authSubmitBtn");
+    const errEl     = document.getElementById("authError");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    modal.classList.add("auth-modal--visible");
+    const isLogin = mode === "login";
+    loginTab?.classList.toggle("auth-tab--active", isLogin);
+    regTab?.classList.toggle("auth-tab--active", !isLogin);
+    if (submitBtn) submitBtn.textContent = isLogin ? "Connexion" : "Créer mon compte";
+    if (errEl) errEl.classList.add("hidden");
+    document.getElementById("authEmail")?.focus();
   }
 
-  function initPinGate() {
-    if (!appPinGate || !appPinForm || !appPinInput) return;
-    // PIN fixe demandé par le projet.
-    localStorage.setItem(APP_PIN_CODE_STORAGE_KEY, APP_PIN_FIXED_CODE);
-    applyAppLockState(false);
+  function hideAuthModal() {
+    const modal = document.getElementById("authModal");
+    modal?.classList.remove("auth-modal--visible");
+    modal?.classList.add("hidden");
+  }
 
-    const stopIfLocked = (e) => {
-      if (appUnlocked) return;
-      if (appPinGate.contains(e.target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    document.addEventListener("pointerdown", stopIfLocked, true);
-    document.addEventListener("click", stopIfLocked, true);
-    document.addEventListener(
-      "keydown",
-      (e) => {
-        if (appUnlocked) return;
-        if (appPinGate.contains(e.target)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        appPinInput.focus();
-      },
-      true
-    );
+  function initAuth() {
+    const modal     = document.getElementById("authModal");
+    const loginTab  = document.getElementById("authLoginTab");
+    const regTab    = document.getElementById("authRegisterTab");
+    const form      = document.getElementById("authForm");
+    const submitBtn = document.getElementById("authSubmitBtn");
+    const errEl     = document.getElementById("authError");
+    const logoutBtn = document.getElementById("userLogoutBtn");
+    if (!modal || !form) return;
 
-    const alreadyUnlocked = localStorage.getItem(APP_PIN_UNLOCKED_STORAGE_KEY) === "1";
-    if (alreadyUnlocked) {
-      applyAppLockState(true);
-      return;
-    }
-    if (appPinTitle) appPinTitle.textContent = "Accès à l'application";
-    if (appPinHint) appPinHint.textContent = "Saisis ton code PIN pour continuer.";
-    if (appPinConfirmWrap) appPinConfirmWrap.classList.add("hidden");
-    appPinInput.focus();
+    let authMode = "login";
 
-    appPinForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      clearPinError();
-      const pin = normalizePin(appPinInput.value);
-      if (!/^\d{4}$/.test(pin)) {
-        showPinError("Le PIN doit contenir exactement 4 chiffres.");
-        return;
-      }
-      if (pin !== APP_PIN_FIXED_CODE) {
-        showPinError("Code PIN incorrect.");
-        return;
-      }
-      unlockApp();
+    loginTab?.addEventListener("click", () => {
+      authMode = "login";
+      loginTab.classList.add("auth-tab--active");
+      regTab?.classList.remove("auth-tab--active");
+      if (submitBtn) submitBtn.textContent = "Connexion";
+      if (errEl) errEl.classList.add("hidden");
     });
+
+    regTab?.addEventListener("click", () => {
+      authMode = "register";
+      regTab.classList.add("auth-tab--active");
+      loginTab?.classList.remove("auth-tab--active");
+      if (submitBtn) submitBtn.textContent = "Créer mon compte";
+      if (errEl) errEl.classList.add("hidden");
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (submitBtn) submitBtn.disabled = true;
+      if (errEl) errEl.classList.add("hidden");
+      const email    = String(document.getElementById("authEmail")?.value || "").trim();
+      const password = String(document.getElementById("authPassword")?.value || "");
+      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+      const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+      try {
+        const res  = await fetch(backendUrl + endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (errEl) { errEl.textContent = data.error || "Erreur serveur."; errEl.classList.remove("hidden"); }
+          return;
+        }
+        setAuthUser(data);
+        hideAuthModal();
+      } catch {
+        if (errEl) { errEl.textContent = "Impossible de contacter le serveur."; errEl.classList.remove("hidden"); }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+
+    logoutBtn?.addEventListener("click", clearAuthUser);
+
+    // Vérifier le token existant au chargement
+    const token = getAuthToken();
+    if (token) {
+      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+      fetch(backendUrl + "/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((data) => { setAuthUser({ ...data, token }); })
+        .catch(() => { clearAuthUser(); });
+    } else {
+      showAuthModal("login");
+    }
   }
 
   function loadJobStats() {
@@ -456,22 +502,18 @@
 
   const ERROR_MESSAGES = {
     NO_SEGMENTS: "Aucun contenu vocal détecté. Vérifie que le fichier contient bien de l'audio.",
-    AUTH_ERROR: "L'accès équipe est incorrect. Vérifie-le et relance.",
     NETWORK_ERROR: "La connexion a été interrompue. Vérifie ta connexion et réessaie.",
-    BACKEND_ERROR: "Le backend local a répondu avec une erreur. Vérifie les logs serveur.",
-    LOCKED: "Accès verrouillé. Saisis le code PIN.",
+    BACKEND_ERROR: "Le backend a répondu avec une erreur. Vérifie les logs serveur.",
+    QUOTA_EXCEEDED: "", // message vient du serveur (429)
     GENERIC: "Quelque chose s'est mal passé. Actualise la page et réessaie.",
   };
 
-  function syncPremiumKeyOnBlur() {
-    if (!premiumKeyInput) return;
-    const typed = String(premiumKeyInput.value || "").trim();
-    if (typed === PREMIUM_KEY) localStorage.setItem(PREMIUM_KEY_STORAGE, typed);
-    else localStorage.removeItem(PREMIUM_KEY_STORAGE);
-  }
+  function syncPremiumKeyOnBlur() { /* supprimé */ }
+  function isContentPremium() { return false; }
 
-  function isContentPremium() {
-    const typed = String(premiumKeyInput?.value || "").trim();
-    if (typed === PREMIUM_KEY) return true;
-    return localStorage.getItem(PREMIUM_KEY_STORAGE) === PREMIUM_KEY;
+  // Initialise l'authentification dès que le DOM est prêt
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAuth);
+  } else {
+    initAuth();
   }

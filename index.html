@@ -19,39 +19,31 @@
 
 <body>
 
-  <section id="appPinGate" class="pin-gate hidden" aria-live="polite">
-    <div class="pin-card" role="dialog" aria-modal="true" aria-labelledby="appPinTitle">
-      <p class="pin-kicker">Sécurité locale</p>
-      <h1 id="appPinTitle" class="pin-title">Accès à l'application</h1>
-      <p id="appPinHint" class="pin-hint">Saisis ton code PIN pour continuer.</p>
-      <form id="appPinForm" class="pin-form">
-        <label class="field-label" for="appPinInput">Code PIN (4 à 8 chiffres)</label>
-        <input
-          id="appPinInput"
-          class="field-input pin-input"
-          type="password"
-          inputmode="numeric"
-          autocomplete="off"
-          maxlength="8"
-          placeholder="••••"
-        />
-        <div id="appPinConfirmWrap" class="hidden">
-          <label class="field-label" for="appPinConfirmInput">Confirmer le PIN</label>
-          <input
-            id="appPinConfirmInput"
-            class="field-input pin-input"
-            type="password"
-            inputmode="numeric"
-            autocomplete="off"
-            maxlength="8"
-            placeholder="••••"
-          />
+  <!-- Modal d'authentification (login / inscription) -->
+  <div id="authModal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-brand-logo">SS</span>
+        <span id="authModalTitle" class="auth-brand-name">SMM Studio</span>
+      </div>
+      <div class="auth-tabs" role="tablist">
+        <button id="authLoginTab"    class="auth-tab auth-tab--active" type="button" role="tab" aria-selected="true">Connexion</button>
+        <button id="authRegisterTab" class="auth-tab"                  type="button" role="tab" aria-selected="false">Créer un compte</button>
+      </div>
+      <form id="authForm" class="auth-form" autocomplete="on" novalidate>
+        <div class="field">
+          <label class="field-label" for="authEmail">Email</label>
+          <input id="authEmail" class="field-input" type="email" autocomplete="email" placeholder="ton@email.com" required />
         </div>
-        <p id="appPinError" class="pin-error hidden"></p>
-        <button id="appPinSubmitBtn" class="btn btn-primary pin-submit" type="submit">Valider</button>
+        <div class="field">
+          <label class="field-label" for="authPassword">Mot de passe</label>
+          <input id="authPassword" class="field-input" type="password" autocomplete="current-password" placeholder="••••••••" required />
+        </div>
+        <p id="authError" class="pin-error hidden"></p>
+        <button id="authSubmitBtn" class="btn btn-primary" type="submit">Connexion</button>
       </form>
     </div>
-  </section>
+  </div>
 
   <!-- SIDEBAR -->
   <nav class="sidebar" aria-label="Navigation">
@@ -129,7 +121,7 @@
         <li class="info-step">
           <span class="info-step-num" aria-hidden="true">02</span>
           <div class="info-step-body">
-            <strong class="info-step-title">Premium : relis et ajuste</strong>
+            <strong class="info-step-title">Relis et ajuste</strong>
             <p class="info-step-desc">Repasse sur les sous-titres dans l'éditeur, corrige les coquilles, sync avec la vidéo.</p>
           </div>
         </li>
@@ -150,6 +142,18 @@
 
     <!-- MAIN TOOL -->
     <main>
+
+      <!-- Bannière statut utilisateur -->
+      <div id="userStatusBanner" class="user-status-banner hidden">
+        <div class="user-status-left">
+          <span id="userStatusTierBadge" class="user-status-tier-badge">Gratuit</span>
+          <span id="userStatusEmail" class="user-status-email"></span>
+        </div>
+        <div class="user-status-right">
+          <span id="userStatusQuota" class="user-status-quota"></span>
+          <button id="userLogoutBtn" class="user-status-logout" type="button">Déconnexion</button>
+        </div>
+      </div>
 
       <!-- ZONE A : Upload -->
       <section class="panel" id="upload-panel" aria-label="Sélection du fichier">
@@ -199,20 +203,8 @@
         </div>
 
         <div class="panel-settings-card">
-          <div id="tierModeBar" class="tier-mode-bar">
-            <div class="tier-segment tier-segment--hero" role="group" aria-labelledby="tierModeLabel">
-              <span class="field-label tier-mode-label" id="tierModeLabel">Mode</span>
-              <div class="tier-segment__btns">
-                <button type="button" id="tierFreeBtn" class="tier-segment__btn tier-segment__btn--free tier-segment__btn--active" aria-pressed="true">
-                  Gratuit
-                </button>
-                <button type="button" id="tierPaidBtn" class="tier-segment__btn tier-segment__btn--premium" aria-pressed="false">
-                  Premium
-                </button>
-              </div>
-            </div>
-            <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Utiliser le backend local (Premium)" />
-          </div>
+          <!-- localMode toujours actif — backend Gemini pour tous les utilisateurs -->
+          <input id="localMode" type="checkbox" class="sr-only" tabindex="-1" aria-label="Backend local" checked />
 
           <div class="action-row action-row--primary-only" id="actionRow">
             <button id="runBtn" class="btn btn-primary" type="button" disabled aria-disabled="true">
@@ -668,18 +660,6 @@
   <div id="toast-region" role="alert" aria-live="assertive" aria-atomic="true"></div>
   <div class="sr-only" id="sr-status" aria-live="polite"></div>
 
-  <div id="premiumPinGate" class="premium-pin-gate hidden" role="dialog" aria-modal="true" aria-labelledby="premiumPinTitle">
-    <div class="premium-pin-card">
-      <p class="pin-kicker">Accès Premium</p>
-      <h2 id="premiumPinTitle" class="pin-title">Code d'accès</h2>
-      <p class="pin-hint">Saisis le code à 4 chiffres pour activer le mode Premium.</p>
-      <form id="premiumPinForm" class="pin-form" autocomplete="off">
-        <input id="premiumPinInput" class="field-input pin-input" type="password" inputmode="numeric" maxlength="4" placeholder="••••" />
-        <div id="premiumPinError" class="pin-error hidden">Code incorrect.</div>
-        <button type="submit" class="btn btn-primary pin-submit">Valider</button>
-      </form>
-    </div>
-  </div>
 
   <script src="srt-core.js" defer></script>
   <script src="app.core.state.js" defer></script>
