@@ -1,12 +1,16 @@
   // ========= UI helpers =========
-  function showToast(msg) {
+  function showToast(msg, variant = "") {
     const region = $("toast-region");
     const t = document.createElement("div");
-    t.className = "toast";
+    t.className = variant ? `toast toast--${variant}` : "toast";
     t.innerHTML = `<span class="toast-msg">${msg}</span><button class="toast-close" aria-label="Fermer">✕</button>`;
     t.querySelector(".toast-close").onclick = () => t.remove();
     region.appendChild(t);
-    setTimeout(() => t?.remove(), 7000);
+    setTimeout(() => t?.remove(), 8000);
+  }
+
+  function showToastError(msg) {
+    showToast(msg, "error");
   }
 
   function sr(msg) {
@@ -151,52 +155,25 @@
     extractAudio.checked = saved === null ? true : saved === "1";
   }
 
-  const isLocalModeEnabled = () => !!localMode?.checked;
+  // Toujours en mode backend local (Gemini pour tous les utilisateurs)
+  const isLocalModeEnabled = () => true;
 
   const getBackendUrl = () => {
     const raw = String(backendUrlInput?.value || "").trim();
     return raw || DEFAULT_BACKEND_URL;
   };
 
-  function syncReviewModeRowVisibility() {
-    if (!reviewModeRow) return;
-    const local = isLocalModeEnabled();
-    reviewModeRow.classList.toggle("hidden", !local);
-    reviewModeRow.setAttribute("aria-hidden", local ? "false" : "true");
-  }
-
-  function syncUploadKeyFields() {
-    const showApiKey = isLocalModeEnabled();
-    if (apiKeyFieldWrap) {
-      apiKeyFieldWrap.classList.toggle("hidden", !showApiKey);
-      apiKeyFieldWrap.setAttribute("aria-hidden", showApiKey ? "false" : "true");
-    }
-    if (premiumKeyFieldWrap) {
-      const show = !!selectedFile && !isLocalModeEnabled();
-      premiumKeyFieldWrap.classList.toggle("hidden", !show);
-      premiumKeyFieldWrap.setAttribute("aria-hidden", show ? "false" : "true");
-    }
-  }
-
   function syncModeUi() {
-    syncReviewModeRowVisibility();
-    syncUploadKeyFields();
+    // Masquer les champs legacy (clé API Groq, etc.)
+    if (apiKeyFieldWrap) { apiKeyFieldWrap.classList.add("hidden"); apiKeyFieldWrap.setAttribute("aria-hidden", "true"); }
     const apiKeyField = apiKeyInput?.closest(".field") || apiKeyInput?.parentElement;
     if (apiKeyField) apiKeyField.style.display = "none";
-    if (!localMode || !apiKeyInput) return;
-    const local = isLocalModeEnabled();
-    if (backendUrlRow) backendUrlRow.classList.remove("hidden");
-    if (geminiKeyField) geminiKeyField.classList.toggle("hidden", !local);
-    if (tierFreeBtn && tierPaidBtn) {
-      tierFreeBtn.classList.toggle("tier-segment__btn--active", !local);
-      tierPaidBtn.classList.toggle("tier-segment__btn--active", local);
-      tierFreeBtn.setAttribute("aria-pressed", String(!local));
-      tierPaidBtn.setAttribute("aria-pressed", String(local));
-    }
+    // Review mode toujours visible
+    if (reviewModeRow) { reviewModeRow.classList.remove("hidden"); reviewModeRow.setAttribute("aria-hidden", "false"); }
   }
 
   function refreshRunButton() {
-    const ok = !!selectedFile;
+    const ok = !!selectedFile && !!currentUser;
     runBtn.disabled = !ok;
     runBtn.setAttribute("aria-disabled", String(!ok));
   }
@@ -291,10 +268,6 @@
 
   function postTranscription(url, apiKey, formData, onProgress, onComplete) {
     return new Promise((resolve, reject) => {
-      if (!appUnlocked) {
-        reject(new Error("LOCKED"));
-        return;
-      }
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.setRequestHeader("Authorization", `Bearer ${apiKey}`);
@@ -318,10 +291,6 @@
 
   function postBackendTranscription(url, formData, onProgress, onComplete, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
-      if (!appUnlocked) {
-        reject(new Error("LOCKED"));
-        return;
-      }
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       for (const [k, v] of Object.entries(extraHeaders || {})) {
@@ -338,11 +307,26 @@
           }
         } else {
           let detail = "";
+          let parsed = {};
           try {
-            const parsed = JSON.parse(xhr.responseText || "{}");
+            parsed = JSON.parse(xhr.responseText || "{}");
             detail = String(parsed?.error || parsed?.message || "").trim();
           } catch {
             detail = String(xhr.responseText || "").trim();
+          }
+          // 429 : quota dépassé → erreur dédiée avec message du serveur
+          if (xhr.status === 429) {
+            const err = new Error(detail || "Quota journalier atteint.");
+            err.status = 429;
+            err.quotaExceeded = true;
+            return reject(err);
+          }
+          // 401 : session expirée → forcer reconnexion
+          if (xhr.status === 401) {
+            clearAuthUser?.();
+            const err = new Error("Session expirée. Reconnecte-toi.");
+            err.status = 401;
+            return reject(err);
           }
           const err = new Error("BACKEND_ERROR");
           err.status = xhr.status;

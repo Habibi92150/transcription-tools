@@ -9,13 +9,17 @@ const express = require("express");
 const cors    = require("cors");
 const multer  = require("multer");
 
-const { handleFreeTranscription } = require("./gratuit");
-const { validatePremiumToken, handlePremiumTranscription, handlePremiumAuth } = require("./premium");
+const { handleRegister, handleLogin, handleMe, authenticateJWT } = require("./auth");
+const { handleTranscription } = require("./transcription");
+const { getUsageToday, incrementUsage } = require("./db");
 
-const PORT       = Number(process.env.PORT || 8787);
+const PORT        = Number(process.env.PORT        || 8787);
 const MAX_FILE_MB = Number(process.env.MAX_FILE_MB || 600);
-const TMP_DIR    = path.join(os.tmpdir(), "transcription-tools");
+const TMP_DIR     = path.join(os.tmpdir(), "transcription-tools");
 
+const DAILY_LIMITS = { free: 3, premium: 50 };
+
+// ── Upload ────────────────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
     try { await fs.mkdir(TMP_DIR, { recursive: true }); cb(null, TMP_DIR); }
@@ -28,25 +32,47 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: MAX_FILE_MB * 1024 * 1024 } });
 
+// ── App ───────────────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-app.get("/health", (_req, res) => res.json({ ok: true, sttEngine: process.env.STT_ENGINE || "whisper-cpp" }));
+// Santé
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Config frontend (rétrocompat)
 app.get("/api/config", (_req, res) =>
-  res.json({ groqApiKey: process.env.GROQ_API_KEY || "", backendUrl: process.env.BACKEND_URL || "" })
+  res.json({ backendUrl: process.env.BACKEND_URL || "" })
 );
 
-app.post("/api/auth/premium", express.json(), handlePremiumAuth);
+// Auth
+app.post("/api/auth/register", handleRegister);
+app.post("/api/auth/login",    handleLogin);
+app.get("/api/auth/me",        authenticateJWT, handleMe);
 
-app.post("/api/transcribe", upload.single("file"), async (req, res) => {
+// Transcription
+app.post("/api/transcribe", authenticateJWT, upload.single("file"), async (req, res) => {
   const uploadedPath = req.file?.path;
-  if (!uploadedPath) return res.status(400).json({ error: "No file provided" });
+  if (!uploadedPath) return res.status(400).json({ error: "Aucun fichier fourni." });
+
   try {
-    const isPremium = validatePremiumToken(String(req.headers["x-premium-token"] || "").trim());
-    const result = isPremium
-      ? await handlePremiumTranscription(req, uploadedPath)
-      : await handleFreeTranscription(req, uploadedPath);
+    // Vérification du quota journalier avant toute opération coûteuse
+    const limit      = DAILY_LIMITS[req.user.tier] || DAILY_LIMITS.free;
+    const usageToday = getUsageToday(req.user.userId);
+
+    if (usageToday >= limit) {
+      return res.status(429).json({
+        error: `Quota journalier atteint (${usageToday}/${limit}).${req.user.tier === "free" ? " Reviens demain ou passe en premium." : " Reviens demain."}`,
+        quota: { used: usageToday, limit },
+      });
+    }
+
+    // Transcription Gemini
+    const result = await handleTranscription(req, uploadedPath);
+
+    // Incrémenter le compteur uniquement après succès
+    incrementUsage(req.user.userId);
+
     return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: String(err?.message || err) });
@@ -54,7 +80,6 @@ app.post("/api/transcribe", upload.single("file"), async (req, res) => {
     await fs.unlink(uploadedPath).catch(() => {});
   }
 });
-
 
 app.listen(PORT, async () => {
   await fs.mkdir(TMP_DIR, { recursive: true }).catch(() => {});
