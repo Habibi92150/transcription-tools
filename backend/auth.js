@@ -3,10 +3,10 @@ const admin = require("firebase-admin");
 const path  = require("path");
 
 if (!admin.apps.length) {
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT)
+    throw new Error("Variable d'env FIREBASE_SERVICE_ACCOUNT manquante.");
   admin.initializeApp({
-    credential: admin.credential.cert(
-      require(path.join(__dirname, "firebase-service-account.json"))
-    ),
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
   });
 }
 
