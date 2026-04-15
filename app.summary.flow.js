@@ -219,15 +219,10 @@
       syncSummaryProviderUi();
     });
   }
-  if (geminiApiKeyInput2) {
-    const gk = localStorage.getItem(EPISODE_SUMMARY_GEMINI_KEY);
-    if (gk) geminiApiKeyInput2.value = gk;
-    geminiApiKeyInput2.addEventListener("change", () => {
-      const t = geminiApiKeyInput2.value.trim();
-      if (t) localStorage.setItem(EPISODE_SUMMARY_GEMINI_KEY, t);
-      else localStorage.removeItem(EPISODE_SUMMARY_GEMINI_KEY);
-    });
-  }
+  // Purge toute clé Gemini stockée localement (sécurité — la clé est uniquement backend)
+  localStorage.removeItem(EPISODE_SUMMARY_GEMINI_KEY);
+  localStorage.removeItem(GEMINI_KEY_STORAGE);
+  if (geminiApiKeyInput2?.closest(".field")) geminiApiKeyInput2.closest(".field").style.display = "none";
 
   if (summaryCopyBtn2) summaryCopyBtn2.onclick = () => copyEpisodeSummaryToClipboard();
   if (summaryNewBtn2) {
@@ -278,10 +273,7 @@
 
         const provider = String(summaryProviderSelect?.value || "groq").trim().toLowerCase();
         const extraHeaders = { "x-summary-provider": provider === "gemini" ? "gemini" : "groq" };
-        const gkEp =
-          String(geminiApiKeyInput2?.value || "").trim() ||
-          String(localStorage.getItem(GEMINI_KEY_STORAGE) || "").trim();
-        if (gkEp) extraHeaders["x-gemini-api-key"] = gkEp;
+        // Clé Gemini uniquement côté backend (.env) — ne jamais l'envoyer depuis le navigateur
 
         const data = await postBackendTranscription(
           `${backendUrl.replace(/\/$/, "")}/api/episode-summary`,

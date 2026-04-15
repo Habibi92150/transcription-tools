@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <script src="coi-serviceworker.js"></script>
@@ -9,15 +9,88 @@
   <meta property="og:title" content="SMM Studio · Transcriptor" />
   <meta property="og:description" content="Dépose. Transcrit. Poste." />
   <meta property="og:type" content="website" />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23948979'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='Inter,Arial' font-size='14' font-weight='800' fill='%23222831'%3ESS%3C/text%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e8722a'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='Inter,Arial' font-size='14' font-weight='800' fill='%23ffffff'%3ESS%3C/text%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=card-harmony" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=pearl-warm-18" />
 
 </head>
 
 <body>
+
+  <!-- Modal Pricing ──────────────────────────────────────────────────────── -->
+  <div id="pricingModal" class="auth-modal hidden" role="dialog" aria-modal="true" aria-labelledby="pricingModalTitle">
+    <div class="pricing-card-wrap">
+      <div class="pricing-modal-head">
+        <h2 id="pricingModalTitle" class="pricing-modal-title">Choisir un plan</h2>
+        <p class="pricing-modal-sub">1 transcription = 1 crédit · ~0,30€/transcription côté serveur</p>
+        <button id="closePricingBtn" class="pricing-close-btn" type="button" aria-label="Fermer">✕</button>
+      </div>
+
+      <!-- Plans -->
+      <div class="pricing-plans">
+        <div class="pricing-plan">
+          <div class="pricing-plan-name">Starter</div>
+          <div class="pricing-plan-price">12€<span>/mois</span></div>
+          <div class="pricing-plan-credits">40 crédits / mois</div>
+          <ul class="pricing-plan-features">
+            <li>~40 transcriptions/mois</li>
+            <li>Rollover 20% des crédits inutilisés</li>
+            <li>Tous les formats (MP4, MP3…)</li>
+          </ul>
+          <button class="pricing-plan-btn" data-price-id="STRIPE_PRICE_STARTER" data-type="subscription" type="button">Choisir Starter</button>
+        </div>
+
+        <div class="pricing-plan pricing-plan--popular">
+          <div class="pricing-plan-badge">Populaire</div>
+          <div class="pricing-plan-name">Pro</div>
+          <div class="pricing-plan-price">29€<span>/mois</span></div>
+          <div class="pricing-plan-credits">120 crédits / mois</div>
+          <ul class="pricing-plan-features">
+            <li>~120 transcriptions/mois</li>
+            <li>Rollover 20% des crédits inutilisés</li>
+            <li>Priorité support</li>
+          </ul>
+          <button class="pricing-plan-btn pricing-plan-btn--primary" data-price-id="STRIPE_PRICE_PRO" data-type="subscription" type="button">Choisir Pro</button>
+        </div>
+
+        <div class="pricing-plan">
+          <div class="pricing-plan-name">Growth</div>
+          <div class="pricing-plan-price">79€<span>/mois</span></div>
+          <div class="pricing-plan-credits">400 crédits / mois</div>
+          <ul class="pricing-plan-features">
+            <li>~400 transcriptions/mois</li>
+            <li>Rollover 20% des crédits inutilisés</li>
+            <li>Idéal agences & équipes</li>
+          </ul>
+          <button class="pricing-plan-btn" data-price-id="STRIPE_PRICE_GROWTH" data-type="subscription" type="button">Choisir Growth</button>
+        </div>
+      </div>
+
+      <!-- Packs one-time -->
+      <div class="pricing-packs">
+        <div class="pricing-packs-title">Packs de crédits (sans abonnement)</div>
+        <div class="pricing-packs-list">
+          <div class="pricing-pack">
+            <span class="pricing-pack-credits">50 crédits</span>
+            <span class="pricing-pack-price">25€</span>
+            <button class="pricing-pack-btn" data-price-id="STRIPE_PRICE_PACK_50" data-type="pack" type="button">Acheter</button>
+          </div>
+          <div class="pricing-pack">
+            <span class="pricing-pack-credits">150 crédits</span>
+            <span class="pricing-pack-price">60€</span>
+            <button class="pricing-pack-btn" data-price-id="STRIPE_PRICE_PACK_150" data-type="pack" type="button">Acheter</button>
+          </div>
+          <div class="pricing-pack">
+            <span class="pricing-pack-credits">500 crédits</span>
+            <span class="pricing-pack-price">175€</span>
+            <button class="pricing-pack-btn" data-price-id="STRIPE_PRICE_PACK_500" data-type="pack" type="button">Acheter</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal d'authentification (login / inscription) -->
   <div id="authModal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
@@ -51,10 +124,35 @@
           <path fill="#FBBC05" d="M3.964 10.71c-.18-.54-.282-1.117-.282-1.71s.102-1.17.282-1.71V4.958H.957C.347 6.173 0 7.548 0 9s.348 2.827.957 4.042l3.007-2.332z"/>
           <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
         </svg>
-        Continuer avec Google
+        <span class="auth-google-label">Continuer avec Google</span>
       </button>
     </div>
   </div>
+
+  <!-- Video wall background (fixed, behind everything) — subtitles burned in via FFmpeg -->
+  <div class="video-wall" aria-hidden="true">
+    <div class="vcard"><video src="/assets/wall/v01.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v02.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v03.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v04.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v05.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v06.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v07.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v08.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v09.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v10.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v11.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v12.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v13.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v14.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v15.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v16.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v17.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v18.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v19.mp4" autoplay muted loop playsinline></video></div>
+    <div class="vcard"><video src="/assets/wall/v20.mp4" autoplay muted loop playsinline></video></div>
+  </div>
+  <div class="video-wall-overlay" aria-hidden="true"></div>
 
   <!-- SIDEBAR -->
   <nav class="sidebar" aria-label="Navigation">
@@ -65,6 +163,12 @@
         <div class="sidebar-brand-sub">Social Tools</div>
       </div>
     </div>
+
+    <!-- Theme toggle -->
+    <button id="themeToggle" class="theme-toggle" title="Mode jour / nuit" aria-label="Basculer mode jour/nuit" type="button">
+      <span class="theme-icon-sun">☀️</span>
+      <span class="theme-icon-moon">🌙</span>
+    </button>
 
     <div class="sidebar-section-label">Outils</div>
 
@@ -97,6 +201,21 @@
     </button>
 
     <div class="sidebar-spacer"></div>
+
+    <!-- Bloc utilisateur connecté -->
+    <div id="userStatusBanner" class="sidebar-user hidden">
+      <div class="sidebar-user-top">
+        <span id="userStatusTierBadge" class="user-status-tier-badge">Gratuit</span>
+        <span id="userStatusEmail" class="sidebar-user-email"></span>
+      </div>
+      <div class="sidebar-user-bottom">
+        <span id="userStatusQuota" class="sidebar-user-quota"></span>
+        <button id="userLogoutBtn" class="sidebar-user-logout" type="button">Déconnexion</button>
+      </div>
+      <button id="openPricingBtn" class="sidebar-upgrade-btn hidden" type="button">
+        ⚡ Voir les offres
+      </button>
+    </div>
 
     <div class="sidebar-footer">
       <p class="sidebar-footer-text">SMM Studio · par Adam Z.</p>
@@ -154,17 +273,6 @@
     <!-- MAIN TOOL -->
     <main>
 
-      <!-- Bannière statut utilisateur -->
-      <div id="userStatusBanner" class="user-status-banner hidden">
-        <div class="user-status-left">
-          <span id="userStatusTierBadge" class="user-status-tier-badge">Gratuit</span>
-          <span id="userStatusEmail" class="user-status-email"></span>
-        </div>
-        <div class="user-status-right">
-          <span id="userStatusQuota" class="user-status-quota"></span>
-          <button id="userLogoutBtn" class="user-status-logout" type="button">Déconnexion</button>
-        </div>
-      </div>
 
       <!-- ZONE A : Upload -->
       <section class="panel" id="upload-panel" aria-label="Sélection du fichier">
@@ -677,8 +785,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
     import {
       getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-      createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
-      sendEmailVerification, sendPasswordResetEmail, signOut,
+      createUserWithEmailAndPassword, signInWithCredential,
+      GoogleAuthProvider, sendEmailVerification, sendPasswordResetEmail, signOut,
     } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 
     const app  = initializeApp({
@@ -696,12 +804,17 @@
       onAuthStateChanged,
       signInWithEmailAndPassword,
       createUserWithEmailAndPassword,
-      signInWithPopup,
+      signInWithCredential,
       sendEmailVerification,
       sendPasswordResetEmail,
       signOut,
     };
+    // Signale aux scripts defer que Firebase est prêt
+    document.dispatchEvent(new CustomEvent("firebase-ready"));
   </script>
+
+  <!-- Google Identity Services (GSI) — remplace Firebase popup, fonctionne partout -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <script src="srt-core.js" defer></script>
   <script src="app.core.state.js" defer></script>

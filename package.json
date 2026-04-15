@@ -3,7 +3,18 @@
   "private": true,
   "scripts": {
     "serve:front": "npx serve .",
-    "start:backend": "node backend/server.js"
+    "start:backend": "node backend/server.js",
+    "dev:backend": "nodemon backend/server.js"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "backend"
+    ],
+    "ext": "js,json,env",
+    "ignore": [
+      "backend/users.json",
+      "backend/**/tmp/**"
+    ]
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.6",
@@ -15,6 +26,11 @@
     "express-rate-limit": "^8.3.2",
     "firebase-admin": "^13.8.0",
     "multer": "^2.1.1",
+    "nodemailer": "^8.0.5",
+    "stripe": "^22.0.1",
     "wav-decoder": "^1.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
   }
 }

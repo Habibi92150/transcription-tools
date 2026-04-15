@@ -1,13 +1,6 @@
 {
   "users": [
     {
-      "id": "40728262-ef0d-4813-afe7-1fcfbf6c30b6",
-      "email": "adamzeid@hotmail.fr",
-      "passwordHash": "bc51c3b3775b0f7434e7f7a6a8f805c3:126d316adf379ce23ba762f3dac66cd8a712138edd4b5440150ed1e0ecf5f46a5db3ebf0c1f286ce29601da59f0602a3583dc630988d72cd3b7798717b6e5d75",
-      "tier": "free",
-      "createdAt": "2026-04-11T16:26:33.782Z"
-    },
-    {
       "id": "7ec674b2-43b9-479e-b8b8-2921ada588b8",
       "email": "test@test.com",
       "passwordHash": "0ab56626d01521c38abdc619892ba03e:5c78b3c73ca15ad2e477be4e562d7641b8e6dd73bbf70bab5874a5f053f6276c8e50c090d3e166f320acfc8ba7ebba719ee02af6279e58d961e80f96ab4e4baf",
@@ -20,11 +13,32 @@
       "passwordHash": "69491ff9b8ae39d074f44ab26980e2f0:603d9331d14e04502fc6ce10016d0264119186955599d9c836ad47ff348937c820c01e84a54bd7ac12836b59b5cfda6365fab8fbbe951114ec1100cd7d9bd663",
       "tier": "free",
       "createdAt": "2026-04-11T16:45:09.826Z"
+    },
+    {
+      "id": "SQGp8NWys1f4pliFILgV4xgiLdB2",
+      "email": "adamzeidkleb@gmail.com",
+      "tier": "free",
+      "createdAt": "2026-04-12T13:42:18.555Z",
+      "creditsBalance": 3
+    },
+    {
+      "id": "hwJCoGtMVLca0ahYZtB8F3rNJdJ2",
+      "email": "adamzeid@hotmail.fr",
+      "tier": "free",
+      "creditsBalance": 1,
+      "stripeCustomerId": null,
+      "stripeSubscriptionId": null,
+      "subscriptionStatus": null,
+      "currentPeriodEnd": null,
+      "createdAt": "2026-04-12T16:32:01.138Z"
     }
   ],
   "usage": {
     "40728262-ef0d-4813-afe7-1fcfbf6c30b6": {
       "2026-04-11": 3
+    },
+    "SQGp8NWys1f4pliFILgV4xgiLdB2": {
+      "2026-04-12": 2
     }
   }
 }

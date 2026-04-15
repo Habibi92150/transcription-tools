@@ -18,7 +18,7 @@ Ce backend transcrit (whisper.cpp local **ou** API Groq audio comme le front `ma
 - `GROQ_STT_TEMPERATURE` (défaut `0`)
 - `GROQ_STT_TIMEOUT_MS` (défaut `600000`, fichiers longs)
 - `TEXT_CLEANUP_PROVIDER` (`none`, `groq` ou `gemini`)
-- `GROQ_API_KEY` (optionnel, utilisé si pas de header `x-groq-api-key`)
+- `GROQ_API_KEY` (requis si STT_ENGINE=groq, uniquement depuis .env — jamais via header HTTP)
 - `GROQ_BASE_URL` (défaut `https://api.groq.com/openai/v1`)
 - `GROQ_CLEANUP_MODEL` (défaut `llama-3.1-8b-instant`)
 - `GROQ_TIMEOUT_MS` (défaut `60000`)
@@ -27,7 +27,7 @@ Ce backend transcrit (whisper.cpp local **ou** API Groq audio comme le front `ma
 - `GROQ_CLEANUP_HINTS` (optionnel, noms/sujets séparés par virgule pour biaiser les corrections de noms propres sur une émission)
 - `GROQ_SUMMARY_MODEL` / `GROQ_SUMMARY_TEMPERATURE` — résumé d'épisode via Groq (défaut si `SUMMARY_PROVIDER=groq`)
 - `SUMMARY_PROVIDER` (`groq` ou `gemini`) — moteur LLM pour `/api/episode-summary` (surcharge possible via en-tête `x-summary-provider`)
-- `GEMINI_API_KEY` — clé [Google AI Studio](https://aistudio.google.com/) / Gemini API (ou en-tête `x-gemini-api-key`)
+- `GEMINI_API_KEY` — clé [Google AI Studio](https://aistudio.google.com/) / Gemini API (uniquement depuis .env — jamais via header HTTP)
 - `GEMINI_API_BASE` (défaut `https://generativelanguage.googleapis.com/v1beta`)
 - `GEMINI_MODEL` — STT audio via Gemini quand `STT_ENGINE=gemini` (défaut `gemini-2.5-flash`)
 - `GEMINI_DIARIZATION_MODEL` (défaut = `GEMINI_MODEL`) — modèle utilisé **uniquement** pour l'appel audio supplémentaire `GEMINI_DIARIZATION_OVERLAY=1` (interlocuteurs alignés sur les timecodes Groq/whisper).

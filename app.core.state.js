@@ -1,5 +1,12 @@
   "use strict";
 
+// ── Theme init (runs immediately to avoid flash) ──
+(function initTheme() {
+  const saved = localStorage.getItem('smm_theme');
+  const system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', saved || system);
+})();
+
   // ========= DOM / state =========
   const $ = (id) => document.getElementById(id);
   const pickBtn = $("pickBtn");
@@ -92,6 +99,7 @@
   const appPinError = null;
 
   const AUTH_TOKEN_KEY = "smmstudio_auth_token";
+  const THEME_KEY = 'smm_theme';
   const GEMINI_KEY_STORAGE = "transcriptor_gemini_key";
   const EXTRACT_AUDIO_PREF_KEY = "groq_extract_audio_pref";
   const LOCAL_MODE_STORAGE_KEY = "local_backend_mode";
@@ -248,20 +256,103 @@
     // showAuthModal est appelé par onAuthStateChanged — pas ici
   }
 
+  const TIER_LABELS = { free: "Gratuit", starter: "Starter", pro: "Pro", growth: "Growth" };
+
   function updateUserBanner() {
-    const banner    = document.getElementById("userStatusBanner");
-    const tierBadge = document.getElementById("userStatusTierBadge");
-    const emailEl   = document.getElementById("userStatusEmail");
-    const quotaEl   = document.getElementById("userStatusQuota");
+    const banner         = document.getElementById("userStatusBanner");
+    const tierBadge      = document.getElementById("userStatusTierBadge");
+    const emailEl        = document.getElementById("userStatusEmail");
+    const quotaEl        = document.getElementById("userStatusQuota");
+    const openPricingBtn = document.getElementById("openPricingBtn");
     if (!banner) return;
     if (!currentUser) { banner.classList.add("hidden"); return; }
     banner.classList.remove("hidden");
-    const isPremium = currentUser.tier === "premium";
-    tierBadge.textContent = isPremium ? "Premium" : "Gratuit";
-    tierBadge.className = `user-status-tier-badge ${isPremium ? "user-status-tier-badge--premium" : ""}`;
-    emailEl.textContent  = currentUser.email || "";
-    quotaEl.textContent  = `${currentUser.usageToday ?? 0}/${currentUser.limit ?? 3} aujourd'hui`;
+
+    const tier           = currentUser.tier || "free";
+    const isPaid         = tier !== "free";
+    const credits        = currentUser.creditsBalance ?? 0;
+    const lowCredits     = credits > 0 && credits < 10;
+    const exhausted      = credits <= 0;
+
+    tierBadge.textContent = TIER_LABELS[tier] || tier;
+    tierBadge.className   = `user-status-tier-badge ${isPaid ? "user-status-tier-badge--premium" : ""}`;
+    emailEl.textContent   = currentUser.email || "";
+    quotaEl.textContent   = `⚡ ${credits} crédit${credits !== 1 ? "s" : ""}`;
+    quotaEl.style.color   = exhausted  ? "var(--color-error, #f87171)"
+                          : lowCredits ? "rgb(220,175,100)"
+                          : "";
+
+    // Bouton "Voir les offres" toujours visible (même premium → peut acheter des packs)
+    if (openPricingBtn) openPricingBtn.classList.remove("hidden");
+
+    // Toasters d'alerte
+    if (exhausted && !banner._quotaWarned) {
+      banner._quotaWarned = true;
+      showToastError?.("Tu n'as plus de crédits. Achète un pack ou abonne-toi.");
+    } else if (lowCredits && !banner._lowWarn) {
+      banner._lowWarn = true;
+      showToastError?.(`Plus que ${credits} crédit${credits !== 1 ? "s" : ""} — pense à recharger.`);
+    }
+    if (!exhausted && !lowCredits) { banner._quotaWarned = false; banner._lowWarn = false; }
   }
+
+  // ── Pricing modal ─────────────────────────────────────────────────────────
+  function openPricingModal() {
+    const modal = document.getElementById("pricingModal");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    modal.classList.add("auth-modal--visible");
+  }
+
+  function closePricingModal() {
+    const modal = document.getElementById("pricingModal");
+    if (!modal) return;
+    modal.classList.add("hidden");
+    modal.classList.remove("auth-modal--visible");
+  }
+
+  document.getElementById("openPricingBtn")?.addEventListener("click", () => {
+    if (!currentUser) { showAuthModal?.("login"); return; }
+    openPricingModal();
+  });
+
+  document.getElementById("closePricingBtn")?.addEventListener("click", closePricingModal);
+
+  // Ferme sur clic hors de la carte
+  document.getElementById("pricingModal")?.addEventListener("click", (e) => {
+    if (e.target === document.getElementById("pricingModal")) closePricingModal();
+  });
+
+  // ── Stripe Checkout ────────────────────────────────────────────────────────
+  async function startCheckout(priceId, type) {
+    if (!currentUser) { closePricingModal(); showAuthModal?.("login"); return; }
+    // Désactive tous les boutons de la modal pour éviter les doubles clics
+    document.querySelectorAll(".pricing-plan-btn, .pricing-pack-btn").forEach((b) => { b.disabled = true; });
+    try {
+      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+      const token      = await getFreshAuthToken();
+      const r = await fetch(`${backendUrl}/api/create-checkout-session`, {
+        method:  "POST",
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+        body:    JSON.stringify({ priceId, type }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || `Erreur ${r.status}`);
+      window.location.href = data.url;
+    } catch (err) {
+      document.querySelectorAll(".pricing-plan-btn, .pricing-pack-btn").forEach((b) => { b.disabled = false; });
+      showToastError?.(`Erreur paiement : ${err.message}`);
+    }
+  }
+
+  // Délégation d'événements pour les boutons de la modal pricing
+  document.getElementById("pricingModal")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-price-id]");
+    if (!btn) return;
+    const priceId = btn.dataset.priceId;
+    const type    = btn.dataset.type;
+    startCheckout(priceId, type);
+  });
 
   // ── Modal auth ────────────────────────────────────────────────────────────────
   function showAuthModal(mode = "login") {
@@ -305,11 +396,11 @@
 
   function initAuth() {
     const fb = window._firebase;
-    if (!fb) { console.error("Firebase SDK non chargé"); return; }
+    if (!fb) { console.error("Firebase SDK non chargé — window._firebase est null"); return; }
 
     const { auth, GoogleAuthProvider, onAuthStateChanged,
             signInWithEmailAndPassword, createUserWithEmailAndPassword,
-            signInWithPopup, sendEmailVerification,
+            signInWithCredential, sendEmailVerification,
             sendPasswordResetEmail, signOut } = fb;
 
     const modal     = document.getElementById("authModal");
@@ -323,7 +414,8 @@
     const forgotBtn = document.getElementById("authForgotBtn");
     if (!modal || !form) return;
 
-    let authMode = "login";
+    let authMode     = "login";
+    let _handlingAuth = false; // évite les doubles appels si auth se déclenche deux fois
 
     const showErr = (msg, ok = false) => {
       if (!errEl) return;
@@ -333,6 +425,7 @@
     };
     const hideErr = () => errEl?.classList.add("hidden");
 
+    // ── Tabs login / inscription ───────────────────────────────────────────────
     loginTab?.addEventListener("click", () => {
       authMode = "login";
       loginTab.classList.add("auth-tab--active");
@@ -360,9 +453,9 @@
         if (authMode === "register") {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
           await sendEmailVerification(cred.user);
-          await signOut(auth); // forcer la vérification email avant connexion
+          await signOut(auth); // forcer vérification email avant connexion
           showErr("Email de vérification envoyé ! Vérifie ta boîte mail puis connecte-toi.", true);
-          loginTab?.click(); // repasser en mode login
+          loginTab?.click();
         } else {
           await signInWithEmailAndPassword(auth, email, password);
           // onAuthStateChanged prend le relais
@@ -374,16 +467,55 @@
       }
     });
 
-    // ── Google sign-in ────────────────────────────────────────────────────────
-    googleBtn?.addEventListener("click", async () => {
-      hideErr();
-      try {
-        await signInWithPopup(auth, new GoogleAuthProvider());
-        // onAuthStateChanged prend le relais
-      } catch (err) {
-        if (err.code !== "auth/popup-closed-by-user")
-          showErr(firebaseErrorMessage(err.code));
+    // ── Google sign-in via Google Identity Services (GSI) ─────────────────────
+    // GSI bypasse l'iframe Firebase cassée par Chrome 115+ sur HTTP.
+    // Fonctionne sur localhost HTTP et en prod HTTPS sans manipulation Chrome.
+    const GSI_CLIENT_ID = "139387201250-5fmjd3v7dgiivep7hsloliq9po14asfr.apps.googleusercontent.com";
+
+    const setGoogleBtnLoading = (loading) => {
+      if (!googleBtn) return;
+      googleBtn.disabled = loading;
+      // Guard : le span peut ne pas exister sur ancienne version HTML cachée
+      const lbl = googleBtn.querySelector(".auth-google-label") || googleBtn;
+      lbl.textContent = loading ? "Connexion en cours…" : "Continuer avec Google";
+    };
+
+    // Appelé par GSI quand l'utilisateur sélectionne son compte Google
+    function onGsiToken(tokenResponse) {
+      if (tokenResponse.error) {
+        setGoogleBtnLoading(false);
+        const cancelled = tokenResponse.error === "access_denied"
+                       || tokenResponse.error === "popup_closed_by_user";
+        if (!cancelled) showErr("Erreur Google : " + tokenResponse.error);
+        return;
       }
+      // access_token → credential Firebase → onAuthStateChanged prend le relais
+      const credential = GoogleAuthProvider.credential(null, tokenResponse.access_token);
+      signInWithCredential(auth, credential).catch((err) => {
+        console.error("[auth] signInWithCredential error:", err.code);
+        setGoogleBtnLoading(false);
+        showErr(firebaseErrorMessage(err.code));
+      });
+    }
+
+    googleBtn?.addEventListener("click", () => {
+      hideErr();
+      if (!window.google?.accounts?.oauth2) {
+        showErr("Le service Google n'est pas encore chargé. Actualise la page.");
+        return;
+      }
+      setGoogleBtnLoading(true);
+      window.google.accounts.oauth2.initTokenClient({
+        client_id: GSI_CLIENT_ID,
+        scope:     "openid email profile",
+        callback:  onGsiToken,
+        error_callback: (err) => {
+          setGoogleBtnLoading(false);
+          if (err?.type !== "popup_closed") {
+            showErr("Connexion Google annulée ou bloquée. Réessaie.");
+          }
+        },
+      }).requestAccessToken({ prompt: "select_account" });
     });
 
     // ── Mot de passe oublié ───────────────────────────────────────────────────
@@ -399,38 +531,77 @@
     });
 
     // ── Déconnexion ───────────────────────────────────────────────────────────
-    logoutBtn?.addEventListener("click", () => signOut(auth));
+    logoutBtn?.addEventListener("click", () => {
+      setGoogleBtnLoading(false);
+      signOut(auth);
+    });
 
-    // ── Session persistante (Firebase IndexedDB) ──────────────────────────────
-    // onAuthStateChanged = zéro flash au refresh, session restaurée automatiquement
-    hideAuthModal(); // masquer pendant que Firebase restaure la session
-    onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        if (!firebaseUser.emailVerified) {
-          // Compte non vérifié → déconnecter et afficher message
-          await signOut(auth);
-          showAuthModal("login");
-          showErr("Email non vérifié. Vérifie ta boîte mail puis reconnecte-toi.");
-          return;
-        }
-        try {
-          const token      = await firebaseUser.getIdToken();
-          const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
-          const r          = await fetch(`${backendUrl}/api/quota`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!r.ok) throw new Error("quota fetch failed");
-          const quota = await r.json();
-          setAuthUser({ token, email: firebaseUser.email, tier: quota.tier, usageToday: quota.usageToday, limit: quota.limit });
-          hideAuthModal();
-        } catch {
-          clearAuthUser();
-          showAuthModal("login");
-        }
-      } else {
+    // ── Fonction commune : créer/récupérer le user en DB puis mettre à jour l'UI ─
+    async function handleFirebaseUser(firebaseUser) {
+      if (!firebaseUser) {
+        _handlingAuth = false;
         clearAuthUser();
         showAuthModal("login");
+        return;
       }
+      if (_handlingAuth) { return; }
+      _handlingAuth = true;
+
+      // Les comptes email/password non vérifiés → bloquer
+      // Les comptes Google ont toujours emailVerified=true
+      if (!firebaseUser.emailVerified) {
+        await signOut(auth);
+        _handlingAuth = false;
+        showAuthModal("login");
+        showErr("Email non vérifié. Vérifie ta boîte mail puis reconnecte-toi.");
+        return;
+      }
+      try {
+        const token      = await firebaseUser.getIdToken();
+        const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+        const r = await fetch(`${backendUrl}/api/quota`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          const err  = new Error(body?.error || `Erreur ${r.status}`);
+          err.status = r.status;
+          throw err;
+        }
+        const quota = await r.json();
+        setAuthUser({
+          token,
+          email:          firebaseUser.displayName || firebaseUser.email,
+          tier:           String(quota?.tier            || "free"),
+          creditsBalance: Math.max(0, parseInt(quota?.creditsBalance ?? 0)),
+          subscriptionStatus: quota?.subscriptionStatus ?? null,
+          currentPeriodEnd:   quota?.currentPeriodEnd   ?? null,
+        });
+        hideAuthModal();
+        setGoogleBtnLoading(false);
+      } catch (err) {
+        const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL);
+        console.error("[auth] quota failed:", err.status, err.message);
+        clearAuthUser();
+        setGoogleBtnLoading(false);
+        showAuthModal("login");
+        const msg = err.status === 401
+          ? "Service backend non reconnu. Vérifie que le backend tourne et que FIREBASE_SERVICE_ACCOUNT est correct."
+          : err.status === 403
+          ? "Email non vérifié côté serveur."
+          : !err.status
+          ? `Backend inaccessible (${backendUrl}). Lance le backend avec npm run start:backend.`
+          : err.message;
+        showErr(msg);
+      } finally {
+        _handlingAuth = false;
+      }
+    }
+
+    // ── Session persistante (Firebase IndexedDB) ──────────────────────────────
+    hideAuthModal(); // masquer pendant que Firebase restaure la session
+    onAuthStateChanged(auth, (firebaseUser) => {
+      handleFirebaseUser(firebaseUser);
     });
   }
 
@@ -596,9 +767,68 @@
   function syncPremiumKeyOnBlur() { /* supprimé */ }
   function isContentPremium() { return false; }
 
-  // Initialise l'authentification dès que le DOM est prêt
+  // Cookie banner supprimée — Google auth passe maintenant par GSI (pas d'iframe Firebase)
+
+  // ── Retour depuis Stripe Checkout ─────────────────────────────────────────
+  (function handleStripeReturn() {
+    const params   = new URLSearchParams(window.location.search);
+    const checkout = params.get("checkout");
+    if (!checkout) return;
+    window.history.replaceState({}, "", window.location.pathname);
+
+    if (checkout === "success") {
+      // Webhook met à jour la DB — on attend 2s pour laisser le temps au webhook d'arriver
+      setTimeout(async () => {
+        showToast?.("🎉 Paiement réussi ! Tes crédits ont été ajoutés.");
+        // Rafraîchit les crédits depuis le backend
+        if (window._firebase?.auth?.currentUser) {
+          try {
+            const token      = await window._firebase.auth.currentUser.getIdToken(true);
+            const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+            const r = await fetch(`${backendUrl}/api/quota`, { headers: { Authorization: `Bearer ${token}` } });
+            if (r.ok) {
+              const quota = await r.json();
+              setAuthUser({
+                ...currentUser,
+                tier:               quota.tier,
+                creditsBalance:     Math.max(0, parseInt(quota.creditsBalance ?? 0)),
+                subscriptionStatus: quota.subscriptionStatus ?? null,
+                currentPeriodEnd:   quota.currentPeriodEnd   ?? null,
+              });
+            }
+          } catch (_) {}
+        }
+      }, 2500);
+    } else if (checkout === "cancel") {
+      showToast?.("Paiement annulé. Tu peux réessayer depuis la sidebar.");
+    }
+  })();
+
+  // Theme toggle
+  document.getElementById('themeToggle')?.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem(THEME_KEY, next);
+  });
+
+  // Initialise l'authentification dès que Firebase est prêt.
+  // Le SDK Firebase est chargé via un <script type="module"> qui a des imports réseau :
+  // il peut s'exécuter APRÈS les scripts defer locaux → race condition.
+  // On attend l'événement "firebase-ready" si window._firebase n'est pas encore défini.
+  function startAuth() {
+    if (window._firebase) {
+      initAuth();
+    } else {
+      // Firebase pas encore prêt — on attend son signal
+      document.addEventListener("firebase-ready", () => {
+        initAuth();
+      }, { once: true });
+    }
+  }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initAuth);
+    document.addEventListener("DOMContentLoaded", startAuth);
   } else {
-    initAuth();
+    startAuth();
   }

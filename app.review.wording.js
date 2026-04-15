@@ -106,12 +106,7 @@
       showToast("Aucun segment disponible pour générer les wordings.");
       return;
     }
-    const apiKey = String(apiKeyInput?.value || "").trim();
-    if (!apiKey) {
-      showToast("Ajoute une clé d'accès équipe pour la génération de wordings.");
-      if (reviewWordingStatus) reviewWordingStatus.textContent = "Clé API requise pour générer.";
-      return;
-    }
+    if (!currentUser) { showAuthModal?.("login"); return; }
     const excerpt = buildWordingExcerpt();
     if (!excerpt) {
       showToast("Impossible de construire un extrait exploitable.");
@@ -172,20 +167,19 @@
     ].join("\n");
 
     try {
-      const res = await fetch(GROQ_CHAT_URL, {
+      const backendUrl = (localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+      const token      = await getFreshAuthToken();
+      const res = await fetch(`${backendUrl}/api/wording`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: WORDING_MODEL,
+          model:       WORDING_MODEL,
           temperature: 0.82,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
+          systemPrompt,
+          userPrompt,
         }),
       });
       if (!res.ok) throw new Error("GENERIC");

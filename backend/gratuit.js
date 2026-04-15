@@ -517,7 +517,7 @@ async function cleanSegmentsWithGemini(segments, geminiApiKey) {
     JSON.stringify(payload);
 
   const model = GEMINI_CLEANUP_MODEL;
-  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   try {
@@ -530,7 +530,7 @@ async function cleanSegmentsWithGemini(segments, geminiApiKey) {
       );
       return fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": geminiApiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
@@ -911,7 +911,7 @@ function splitLongSegmentsBackend(segments, maxDurationSec = 8) {
 
 async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
   const key = String(apiKey || "").trim();
-  if (!key) throw new Error("Gemini STT requires API key (header x-gemini-api-key or GEMINI_API_KEY)");
+  if (!key) throw new Error("Gemini STT requires GEMINI_API_KEY in backend .env");
   const model = String(modelId || GEMINI_MODEL).trim() || GEMINI_MODEL;
   const speakerDiarizationPass = Boolean(options?.speakerDiarizationPass);
   const customSystemPrompt = options?.systemPrompt ? String(options.systemPrompt) : null;
@@ -949,7 +949,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
         ? "Audio WAV mono 16 kHz : transcris tout le monde sur toute la durée, avec locuteurs et timestamps ; JSON uniquement (tableau d'objets start/end/text/speaker), jamais de .srt."
         : "Analyse l'audio ci-joint (WAV mono 16 kHz) et produis le tableau JSON des segments, rien d'autre — pas de format sous-titres .srt.";
 
-    const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+    const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
     const baseParts = [
       {
         inlineData: {
@@ -978,7 +978,7 @@ async function transcribeWithGemini(filePath, apiKey, modelId, options = {}) {
       async function doFetch(body) {
         return fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
           body: JSON.stringify(body),
           signal: controller.signal,
         });
@@ -1175,7 +1175,7 @@ async function transcribeWithGeminiChunked(filePath, key, modelId, options) {
 }
 
 async function transcribeWithGroqAudio(filePath, groqApiKey) {
-  if (!groqApiKey) throw new Error("Groq STT requires API key (header x-groq-api-key or GROQ_API_KEY)");
+  if (!groqApiKey) throw new Error("Groq STT requires GROQ_API_KEY in backend .env");
 
   const buf = await fs.readFile(filePath);
   const filename = path.basename(filePath) || "audio.wav";
@@ -1244,10 +1244,9 @@ async function transcribeWithWhisperCpp(filePath) {
 }
 
 async function handleFreeTranscription(req, uploadedPath) {
-  const groqApiKey = String(req.headers["x-groq-api-key"] || process.env.GROQ_API_KEY || "").trim();
-  const userGeminiHeader = String(req.headers["x-gemini-api-key"] || "").trim();
+  const groqApiKey = String(process.env.GROQ_API_KEY || "").trim(); // clé uniquement depuis .env
   const skipGemini = /^(1|true|yes|on)$/i.test(String(req.headers["x-skip-gemini"] || "").trim());
-  const geminiKeyForReq = userGeminiHeader || (skipGemini ? "" : GEMINI_API_KEY);
+  const geminiKeyForReq = skipGemini ? "" : GEMINI_API_KEY; // clé uniquement depuis .env
 
   let segments;
   let sttStrategy = "whisper-cpp";

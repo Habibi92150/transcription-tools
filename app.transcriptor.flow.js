@@ -282,6 +282,14 @@
     if (!selectedFile) return;
     if (!currentUser) { showAuthModal("login"); return; }
 
+    // Vérification quota côté client avant d'envoyer
+    const used  = currentUser.usageToday ?? 0;
+    const limit = currentUser.limit ?? 3;
+    if (used >= limit) {
+      showToastError(`Quota atteint (${used}/${limit}). Reviens demain${currentUser.tier !== "premium" ? " ou passe en premium." : "."}`);
+      return;
+    }
+
     setInfoStep(1);
     const backendUrl = getBackendUrl();
     const modeKey    = "local";
